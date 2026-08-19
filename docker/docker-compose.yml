@@ -41,7 +41,7 @@ services:
                 VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         restart: unless-stopped
         ports:
-            - "3000:80"
+            - "3000:3000"
         depends_on:
             - api
 
