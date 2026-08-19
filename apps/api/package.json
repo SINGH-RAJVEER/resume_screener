@@ -1,0 +1,13 @@
+{
+    "name": "@template/api",
+    "private": true,
+    "version": "0.0.1",
+    "scripts": {
+        "dev": "go run ./cmd/api",
+        "build": "go build -o dist/api ./cmd/api",
+        "start": "./dist/api",
+        "test": "go test ./...",
+        "typecheck": "go vet ./...",
+        "lint": "go vet ./..."
+    }
+}

@@ -1,0 +1,102 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@source "../../../../apps/web/src/**/*.{ts,tsx}";
+@source "../**/*.{ts,tsx}";
+
+.app-shell {
+    display: grid;
+    min-height: 100svh;
+    place-items: center;
+    padding: 3rem 1rem;
+}
+
+.home-card {
+    width: 100%;
+    max-width: 32rem;
+}
+
+.session-panel {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklch, var(--muted) 45%, transparent);
+}
+
+.muted-copy {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+}
+
+.session-name {
+    margin: 0.25rem 0 0;
+    font-size: 1.125rem;
+    font-weight: 500;
+}
+
+.home-prompt {
+    line-height: 1.5rem;
+}
+
+.home-actions {
+    gap: 0.75rem;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 28rem;
+}
+
+.auth-title {
+    font-size: 1.5rem;
+    line-height: 2rem;
+}
+
+.auth-fields {
+    display: grid;
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+}
+
+.form-field {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.form-error {
+    margin: 0;
+    color: var(--destructive);
+    font-size: 0.875rem;
+}
+
+.auth-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.auth-submit {
+    width: 100%;
+    border: 1px solid var(--foreground);
+    background: var(--background);
+    color: var(--foreground);
+}
+
+.auth-submit:hover {
+    background: var(--muted);
+}
+
+.auth-switch {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.auth-link {
+    color: var(--foreground);
+    font-weight: 500;
+    text-decoration: underline;
+}

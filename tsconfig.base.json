@@ -1,0 +1,37 @@
+{
+    "compilerOptions": {
+        "target": "ES2023",
+        "useDefineForClassFields": true,
+        "module": "ESNext",
+        "lib": ["ES2023", "DOM", "DOM.Iterable"],
+        "skipLibCheck": true,
+
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "moduleDetection": "force",
+        "noEmit": true,
+
+        "jsx": "react-jsx",
+        "jsxImportSource": "react",
+
+        "strict": true,
+
+        "paths": {
+            "@/*": ["./apps/*"],
+            "@pkg/*": ["./libs/*"]
+        },
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "allowUnusedLabels": false,
+        "noUncheckedSideEffectImports": true,
+        "noFallthroughCasesInSwitch": true,
+        "allowUnreachableCode": false,
+
+        "noUncheckedIndexedAccess": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "erasableSyntaxOnly": true
+    }
+}

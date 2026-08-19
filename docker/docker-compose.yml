@@ -1,0 +1,49 @@
+name: template
+
+services:
+    postgres:
+        image: postgres:18-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: ${POSTGRES_DB:-template}
+            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+        volumes:
+            - postgres_data:/var/lib/postgresql
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-template}"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+
+    api:
+        build:
+            context: ..
+            dockerfile: docker/Dockerfile.api
+        restart: unless-stopped
+        ports:
+            - "8000:8000"
+        environment:
+            DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-template}
+            WEB_URL: ${WEB_URL:-http://localhost:3000}
+            JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+            JWT_TTL: ${JWT_TTL:-168h}
+            PORT: 8000
+        depends_on:
+            postgres:
+                condition: service_healthy
+
+    web:
+        build:
+            context: ..
+            dockerfile: docker/Dockerfile.web
+            args:
+                VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        restart: unless-stopped
+        ports:
+            - "3000:80"
+        depends_on:
+            - api
+
+volumes:
+    postgres_data:

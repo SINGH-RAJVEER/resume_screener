@@ -1,0 +1,26 @@
+{
+    "name": "template",
+    "private": true,
+    "workspaces": [
+        "apps/*",
+        "libs/*"
+    ],
+    "scripts": {
+        "build": "nx run-many -t build",
+        "dev": "nx run-many -t dev",
+        "lint": "nx run-many -t lint",
+        "format": "biome format --write .",
+        "check": "biome check --write .",
+        "typecheck": "nx run-many -t typecheck",
+        "test": "nx run-many -t test"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.6",
+        "@typescript/native-preview": "7.0.0-dev.20260707.2",
+        "nx": "^23.1.0"
+    },
+    "engines": {
+        "bun": ">=1.3.0"
+    },
+    "packageManager": "bun@1.3.4"
+}
