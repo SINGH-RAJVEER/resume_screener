@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
-from typing import Any
 
 import bcrypt
 import jwt
@@ -19,6 +19,13 @@ class InvalidCredentialsError(Exception):
 
 class ValidationError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class AuthResult:
+    user: UserRecord
+    token: str
+    expires_at: datetime
 
 
 def validate_credentials(name: str, email: str, password: str) -> None:
@@ -44,7 +51,7 @@ class AuthService:
         self._jwt_secret = jwt_secret
         self._jwt_ttl = jwt_ttl
 
-    async def register(self, name: str, email: str, password: str) -> dict[str, Any]:
+    async def register(self, name: str, email: str, password: str) -> AuthResult:
         name = name.strip()
         email = email.strip().lower()
         validate_credentials(name, email, password)
@@ -52,7 +59,7 @@ class AuthService:
         user = await self._store.register(name, email, password_hash)
         return self.issue_token(user)
 
-    async def sign_in(self, email: str, password: str) -> dict[str, Any]:
+    async def sign_in(self, email: str, password: str) -> AuthResult:
         email = email.strip().lower()
         try:
             user, password_hash = await self._store.credentials(email)
@@ -62,7 +69,7 @@ class AuthService:
             raise InvalidCredentialsError
         return self.issue_token(user)
 
-    def issue_token(self, user: UserRecord) -> dict[str, Any]:
+    def issue_token(self, user: UserRecord) -> AuthResult:
         now = datetime.now(UTC)
         expires_at = now + self._jwt_ttl
         claims = {
@@ -74,12 +81,7 @@ class AuthService:
         token = jwt.encode(  # pyright: ignore[reportUnknownMemberType]
             claims, self._jwt_secret, algorithm="HS256"
         )
-        return {
-            "user": user_json(user),
-            "token": token,
-            "tokenType": "Bearer",
-            "expiresAt": timestamp_json(expires_at),
-        }
+        return AuthResult(user=user, token=token, expires_at=expires_at)
 
     async def authenticate(self, token: str) -> UserRecord:
         try:
@@ -96,21 +98,3 @@ class AuthService:
             return await self._store.user(subject)
         except (jwt.InvalidTokenError, NotFoundError, InvalidCredentialsError):
             raise InvalidCredentialsError from None
-
-
-def user_json(user: UserRecord) -> dict[str, Any]:
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "emailVerified": user.email_verified,
-        "image": user.image,
-        "createdAt": timestamp_json(user.created_at),
-        "updatedAt": timestamp_json(user.updated_at),
-    }
-
-
-def timestamp_json(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")

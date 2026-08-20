@@ -142,7 +142,7 @@ async def test_signin_rejects_invalid_password(client: ClientFactory) -> None:
 async def test_me_and_session_require_valid_jwt(client: ClientFactory) -> None:
     account = user()
     store = FakeStore(account)
-    token = AuthService(store, SECRET, timedelta(hours=1)).issue_token(account)["token"]
+    token = AuthService(store, SECRET, timedelta(hours=1)).issue_token(account).token
     async with await client(store) as http:
         unauthorized = await http.get("/api/me")
         authorized = await http.get("/api/me", headers={"Authorization": f"Bearer {token}"})
@@ -157,7 +157,7 @@ async def test_me_and_session_require_valid_jwt(client: ClientFactory) -> None:
 async def test_expired_jwt_is_unauthorized(client: ClientFactory) -> None:
     account = user()
     store = FakeStore(account)
-    token = AuthService(store, SECRET, timedelta(hours=-1)).issue_token(account)["token"]
+    token = AuthService(store, SECRET, timedelta(hours=-1)).issue_token(account).token
     async with await client(store) as http:
         response = await http.get("/api/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401

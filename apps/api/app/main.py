@@ -6,27 +6,22 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .auth import AuthService, InvalidCredentialsError, ValidationError, user_json
 from .config import Settings, load_settings
 from .http import (
     APIError,
-    BodyLimitMiddleware,
-    CORSMiddleware,
-    InvalidRequestError,
-    RecoveryMiddleware,
+    BodySizeLimitMiddleware,
+    OriginGuardMiddleware,
     RequestLoggingMiddleware,
-    SignInRequest,
-    SignUpRequest,
-    decode_json,
     error_body,
 )
-from .store import EmailAlreadyUsedError, SQLAlchemyStore, Store, create_engine_for_url
+from .routes import router
+from .store import SQLAlchemyStore, Store, create_engine_for_url
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("resume-screener.api")
 
 
 @asynccontextmanager
@@ -63,89 +58,23 @@ def create_app(store: Store | None = None, settings: Settings | None = None) -> 
     async def api_error_handler(_request: Request, error: APIError) -> JSONResponse:
         return JSONResponse(error_body(error.code, error.message), status_code=error.status)
 
+    @application.exception_handler(RequestValidationError)
+    async def invalid_request_handler(
+        _request: Request,
+        _error: RequestValidationError,
+    ) -> JSONResponse:
+        return JSONResponse(error_body("INVALID_REQUEST", "invalid JSON body"), status_code=400)
+
     @application.exception_handler(Exception)
     async def unexpected_error_handler(_request: Request, error: Exception) -> JSONResponse:
-        logging.getLogger("template-api").exception("unhandled request error", exc_info=error)
+        logger.exception("unhandled request error", exc_info=error)
         return JSONResponse(error_body("INTERNAL_ERROR", "Internal server error"), status_code=500)
 
-    @application.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @application.post("/api/auth/sign-up/email")
-    async def sign_up(request: Request) -> JSONResponse:
-        try:
-            input_data = await decode_json(request, SignUpRequest)
-        except InvalidRequestError:
-            raise APIError(400, "INVALID_REQUEST", "invalid JSON body") from None
-        service = auth_service(request)
-        try:
-            result = await service.register(input_data.name, input_data.email, input_data.password)
-        except ValidationError as error:
-            raise APIError(400, "INVALID_CREDENTIALS", str(error)) from error
-        except EmailAlreadyUsedError:
-            raise APIError(409, "EMAIL_ALREADY_EXISTS", "Email is already registered") from None
-        except Exception:
-            logging.getLogger("template-api").exception("register user")
-            raise APIError(500, "INTERNAL_ERROR", "Could not create account") from None
-        return JSONResponse(jsonable_encoder(result), status_code=201)
-
-    @application.post("/api/auth/sign-in/email")
-    async def sign_in(request: Request) -> JSONResponse:
-        try:
-            input_data = await decode_json(request, SignInRequest)
-        except InvalidRequestError:
-            raise APIError(400, "INVALID_REQUEST", "invalid JSON body") from None
-        try:
-            result = await auth_service(request).sign_in(input_data.email, input_data.password)
-        except InvalidCredentialsError:
-            raise APIError(401, "INVALID_EMAIL_OR_PASSWORD", "Invalid email or password") from None
-        except Exception:
-            logging.getLogger("template-api").exception("sign in")
-            raise APIError(500, "INTERNAL_ERROR", "Could not sign in") from None
-        return JSONResponse(jsonable_encoder(result))
-
-    @application.post("/api/auth/sign-out")
-    async def sign_out() -> dict[str, bool]:
-        return {"success": True}
-
-    @application.get("/api/auth/session")
-    async def session(request: Request) -> JSONResponse:
-        user = await authenticated_user(request)
-        return JSONResponse(jsonable_encoder(None if user is None else {"user": user_json(user)}))
-
-    @application.get("/api/me")
-    async def me(request: Request) -> JSONResponse:
-        user = await authenticated_user(request)
-        if user is None:
-            raise APIError(401, "UNAUTHORIZED", "Unauthorized")
-        return JSONResponse(jsonable_encoder({"user": user_json(user)}))
-
-    application.add_middleware(BodyLimitMiddleware)
-    application.add_middleware(CORSMiddleware, web_url=settings.web_url)
-    application.add_middleware(RecoveryMiddleware)
+    application.include_router(router)
+    application.add_middleware(BodySizeLimitMiddleware)
+    application.add_middleware(OriginGuardMiddleware, web_url=settings.web_url)
     application.add_middleware(RequestLoggingMiddleware)
     return application
-
-
-def auth_service(request: Request) -> AuthService:
-    settings: Settings = request.app.state.settings
-    store: Store = request.app.state.store
-    return AuthService(store, settings.jwt_secret, settings.jwt_ttl)
-
-
-async def authenticated_user(request: Request):
-    authorization = request.headers.get("authorization", "")
-    scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.casefold() != "bearer" or not token:
-        return None
-    try:
-        return await auth_service(request).authenticate(token)
-    except InvalidCredentialsError:
-        return None
-    except Exception:
-        logging.getLogger("template-api").debug("reject bearer token", exc_info=True)
-        return None
 
 
 app = create_app()
