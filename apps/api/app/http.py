@@ -10,7 +10,7 @@ logger = logging.getLogger("resume-screener.api")
 MAX_BODY_BYTES = 1 << 20
 
 
-class RequestBodyTooLargeError(Exception):
+class _RequestBodyTooLargeError(Exception):
     pass
 
 
@@ -53,12 +53,12 @@ class BodySizeLimitMiddleware:
             if message["type"] == "http.request":
                 consumed += len(message.get("body", b""))
                 if consumed > MAX_BODY_BYTES:
-                    raise RequestBodyTooLargeError
+                    raise _RequestBodyTooLargeError
             return message
 
         try:
             await self.app(scope, limited_receive, send)
-        except RequestBodyTooLargeError:
+        except _RequestBodyTooLargeError:
             await send_error(send, 400, "INVALID_REQUEST", "invalid JSON body")
 
 

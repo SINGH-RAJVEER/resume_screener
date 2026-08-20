@@ -5,11 +5,10 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
-import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.auth import JWT_ISSUER, AuthService
+from app.auth import AuthService
 from app.config import Settings
 from app.main import create_app
 from app.store import EmailAlreadyUsedError, NotFoundError, Store, UserRecord
@@ -100,13 +99,10 @@ async def test_signup_normalizes_email_hashes_password_and_returns_jwt() -> None
     assert store.user_record.email == "ada@example.com"
     assert bcrypt.checkpw(b"password123", store.password_hash.encode())
     assert response.json()["tokenType"] == "Bearer"
-    claims = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
-        response.json()["token"],
-        SECRET,
-        algorithms=["HS256"],
-        issuer=JWT_ISSUER,
+    authenticated = await AuthService(store, SECRET, timedelta(hours=1)).authenticate(
+        response.json()["token"]
     )
-    assert claims["sub"] == "user-1"
+    assert authenticated.id == "user-1"
 
 
 async def test_signup_rejects_trailing_json() -> None:

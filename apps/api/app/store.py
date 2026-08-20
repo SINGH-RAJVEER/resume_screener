@@ -51,7 +51,7 @@ def database_url_for_asyncpg(url: str) -> str:
     return url
 
 
-def new_id() -> str:
+def _new_id() -> str:
     return secrets.token_urlsafe(18)
 
 
@@ -62,7 +62,7 @@ class SQLAlchemyStore:
     async def register(self, name: str, email: str, password_hash: str) -> UserRecord:
         now = datetime.now(UTC)
         user = User(
-            id=new_id(),
+            id=_new_id(),
             name=name,
             email=email,
             email_verified=False,
@@ -70,7 +70,7 @@ class SQLAlchemyStore:
             updated_at=now,
         )
         account = Account(
-            id=new_id(),
+            id=_new_id(),
             account_id=email,
             provider_id="credential",
             user_id=user.id,
@@ -82,10 +82,10 @@ class SQLAlchemyStore:
             async with self._sessions.begin() as session:
                 session.add_all([user, account])
         except IntegrityError as error:
-            if is_email_conflict(error):
+            if _is_email_conflict(error):
                 raise EmailAlreadyUsedError from error
             raise
-        return to_record(user)
+        return _to_record(user)
 
     async def credentials(self, email: str) -> tuple[UserRecord, str]:
         async with self._sessions() as session:
@@ -97,7 +97,7 @@ class SQLAlchemyStore:
             row = result.one_or_none()
         if row is None or row[1] is None:
             raise NotFoundError
-        return to_record(row[0]), row[1]
+        return _to_record(row[0]), row[1]
 
     async def user(self, user_id: str) -> UserRecord:
         async with self._sessions() as session:
@@ -105,10 +105,10 @@ class SQLAlchemyStore:
             user = result.scalar_one_or_none()
         if user is None:
             raise NotFoundError
-        return to_record(user)
+        return _to_record(user)
 
 
-def to_record(user: User) -> UserRecord:
+def _to_record(user: User) -> UserRecord:
     return UserRecord(
         id=user.id,
         name=user.name,
@@ -124,7 +124,7 @@ def create_engine_for_url(database_url: str) -> AsyncEngine:
     return create_async_engine(database_url_for_asyncpg(database_url), pool_pre_ping=True)
 
 
-def is_email_conflict(error: IntegrityError) -> bool:
+def _is_email_conflict(error: IntegrityError) -> bool:
     cause = getattr(error.orig, "__cause__", None)
     constraint = getattr(cause, "constraint_name", None)
     return constraint in {"uq_user_email", "user_email_key"}

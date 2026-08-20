@@ -3,29 +3,29 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from .auth import AuthResult, AuthService, InvalidCredentialsError, ValidationError
+from .auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
 from .http import APIError
 from .store import EmailAlreadyUsedError, Store, UserRecord
 
 
 class RequestModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
 
 
 class SignUpRequest(RequestModel):
     name: str = ""
     email: str = ""
     password: str = ""
-    callbackURL: str = ""
+    callback_url: str = Field("", alias="callbackURL")
 
 
 class SignInRequest(RequestModel):
     email: str = ""
     password: str = ""
-    callbackURL: str = ""
+    callback_url: str = Field("", alias="callbackURL")
 
 
 class ResponseModel(BaseModel):
@@ -69,7 +69,7 @@ async def sign_up(input_data: SignUpRequest, request: Request) -> AuthResponse:
             input_data.email,
             input_data.password,
         )
-    except ValidationError as error:
+    except CredentialValidationError as error:
         raise APIError(400, "INVALID_CREDENTIALS", str(error)) from error
     except EmailAlreadyUsedError:
         raise APIError(409, "EMAIL_ALREADY_EXISTS", "Email is already registered") from None

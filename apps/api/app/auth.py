@@ -17,7 +17,7 @@ class InvalidCredentialsError(Exception):
     pass
 
 
-class ValidationError(Exception):
+class CredentialValidationError(Exception):
     pass
 
 
@@ -30,19 +30,19 @@ class AuthResult:
 
 def validate_credentials(name: str, email: str, password: str) -> None:
     if not name or len(name.encode()) > 100:
-        raise ValidationError("Name must be between 1 and 100 characters")
+        raise CredentialValidationError("Name must be between 1 and 100 characters")
     parsed_name, parsed_email = parseaddr(email)
     if (
         not parsed_email
         or parsed_name
-        or not parsed_email.casefold() == email.casefold()
+        or parsed_email.casefold() != email.casefold()
         or len(email.encode()) > 254
         or re.search(r"\s", email)
     ):
-        raise ValidationError("Enter a valid email address")
+        raise CredentialValidationError("Enter a valid email address")
     password_length = len(password.encode())
     if password_length < 8 or password_length > 72:
-        raise ValidationError("Password must be between 8 and 72 characters")
+        raise CredentialValidationError("Password must be between 8 and 72 characters")
 
 
 class AuthService:
