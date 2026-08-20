@@ -9,6 +9,7 @@ import {
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
 
 export const SignIn = () => {
@@ -66,9 +67,9 @@ export const SignIn = () => {
 							Sign In
 						</Button>
 						<p className="auth-switch">
-							<a className="auth-link" href="/sign-up">
+							<Link className="auth-link" to="/sign-up">
 								Sign Up
-							</a>
+							</Link>
 						</p>
 					</CardFooter>
 				</form>

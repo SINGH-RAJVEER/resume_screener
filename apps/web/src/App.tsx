@@ -4,6 +4,7 @@ import {
 	CardContent,
 	CardFooter,
 } from "@resume-screener/ui/components/card";
+import { Link } from "react-router-dom";
 import { authClient } from "./lib/auth-client";
 
 const App = () => {
@@ -37,10 +38,10 @@ const App = () => {
 					) : (
 						<>
 							<Button asChild>
-								<a href="/sign-up">Create account</a>
+								<Link to="/sign-up">Create account</Link>
 							</Button>
 							<Button asChild variant="outline">
-								<a href="/sign-in">Sign in</a>
+								<Link to="/sign-in">Sign in</Link>
 							</Button>
 						</>
 					)}
