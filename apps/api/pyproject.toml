@@ -9,6 +9,7 @@ dependencies = [
 	"fastapi>=0.116.1",
 	"pydantic>=2.13.4",
 	"pyjwt>=2.10.1",
+	"python-multipart>=0.0.32",
 	"sqlalchemy[asyncio]>=2.0.42",
 	"starlette>=1.6.0",
 	"uvicorn>=0.35.0",

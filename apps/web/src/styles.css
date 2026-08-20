@@ -83,3 +83,94 @@
 	font-weight: 500;
 	text-decoration: underline;
 }
+
+.workspace-shell {
+	max-width: 90rem;
+	margin: 0 auto;
+	padding: 2rem;
+}
+
+.workspace-header,
+.inline-form,
+.requirements-list > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.workspace-header h1,
+.workspace-column h2 {
+	margin: 0;
+}
+
+.eyebrow,
+.workspace-notice {
+	margin: 0 0 0.5rem;
+	color: var(--muted-foreground);
+	font-size: 0.875rem;
+}
+
+.workspace-notice {
+	margin-top: 1rem;
+	color: var(--foreground);
+}
+
+.workspace-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 3rem;
+	margin-top: 3rem;
+}
+
+.workspace-column,
+.stack-form,
+.selection-list,
+.requirements-list {
+	display: grid;
+	align-content: start;
+	gap: 1rem;
+}
+
+.selection-list button {
+	display: grid;
+	gap: 0.25rem;
+	padding: 0.75rem 0;
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: transparent;
+	text-align: left;
+}
+
+.selection-list button.selected {
+	font-weight: 600;
+}
+
+.selection-list span {
+	color: var(--muted-foreground);
+	font-size: 0.75rem;
+}
+
+textarea,
+select {
+	width: 100%;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: transparent;
+	padding: 0.625rem 0.75rem;
+}
+
+textarea {
+	min-height: 12rem;
+	resize: vertical;
+}
+.upload-form {
+	margin-top: 2rem;
+}
+
+@media (max-width: 900px) {
+	.workspace-grid {
+		grid-template-columns: 1fr;
+		gap: 2.5rem;
+	}
+}

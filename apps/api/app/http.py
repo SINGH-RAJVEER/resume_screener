@@ -8,6 +8,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger("resume-screener.api")
 MAX_BODY_BYTES = 1 << 20
+MAX_MULTIPART_BODY_BYTES = 20 << 20
 
 
 class _RequestBodyTooLargeError(Exception):
@@ -33,13 +34,22 @@ class BodySizeLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        content_type = next(
+            (value for key, value in scope.get("headers", []) if key.lower() == b"content-type"),
+            b"",
+        )
+        limit = (
+            MAX_MULTIPART_BODY_BYTES
+            if b"multipart/form-data" in content_type
+            else MAX_BODY_BYTES
+        )
         content_length = next(
             (value for key, value in scope.get("headers", []) if key.lower() == b"content-length"),
             None,
         )
         if content_length is not None:
             try:
-                if int(content_length) > MAX_BODY_BYTES:
+                if int(content_length) > limit:
                     await send_error(send, 400, "INVALID_REQUEST", "invalid JSON body")
                     return
             except ValueError:
@@ -52,7 +62,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 consumed += len(message.get("body", b""))
-                if consumed > MAX_BODY_BYTES:
+                if consumed > limit:
                     raise _RequestBodyTooLargeError
             return message
 

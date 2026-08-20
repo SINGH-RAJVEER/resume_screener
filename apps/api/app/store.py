@@ -8,7 +8,8 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
+	AsyncEngine,
+	AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
@@ -58,6 +59,9 @@ def _new_id() -> str:
 class SQLAlchemyStore:
     def __init__(self, engine: AsyncEngine) -> None:
         self._sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    def sessions(self) -> async_sessionmaker[AsyncSession]:
+        return self._sessions
 
     async def register(self, name: str, email: str, password_hash: str) -> UserRecord:
         now = datetime.now(UTC)
