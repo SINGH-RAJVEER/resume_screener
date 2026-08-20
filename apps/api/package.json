@@ -3,11 +3,12 @@
     "private": true,
     "version": "0.0.1",
     "scripts": {
-        "dev": "go run ./cmd/api",
-        "build": "go build -o dist/api ./cmd/api",
-        "start": "./dist/api",
-        "test": "go test ./...",
-        "typecheck": "go vet ./...",
-        "lint": "go vet ./..."
+        "dev": "uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+        "build": "uv sync",
+        "start": "uv run uvicorn app.main:app --host 0.0.0.0 --port 8000",
+        "test": "uv run pytest",
+        "typecheck": "uv run pyright",
+        "lint": "uv run ruff check .",
+        "format": "uv run ruff format ."
     }
 }
