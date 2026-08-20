@@ -1,10 +1,11 @@
 .git
-.venv
+.jj
+**/.venv
 node_modules
-__pycache__
+**/__pycache__
 *.py[cod]
-.pytest_cache
-.ruff_cache
-.pyright
+**/.pytest_cache
+**/.ruff_cache
+**/.pyright
 dist
 build

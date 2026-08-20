@@ -1,15 +1,19 @@
 FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
 FROM python:3.13-slim-bookworm
 COPY --from=uv /uv /uvx /bin/
+RUN useradd --create-home app
 WORKDIR /app/apps/api
 
 COPY apps/api/pyproject.toml apps/api/uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY apps/api/ ./
-RUN useradd --create-home app && chown -R app:app /app
+COPY --chown=app:app apps/api/ ./
+
+ENV PATH="/app/apps/api/.venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 USER app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uv run alembic upgrade head && exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
