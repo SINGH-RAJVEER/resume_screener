@@ -45,6 +45,9 @@ interface SignUpCredentials extends Credentials {
 type AuthResult<T> =
 	| { data: T; error: null }
 	| { data: null; error: AuthError };
+type ParsedResponse =
+	| { payload: unknown; error: null }
+	| { payload: null; error: AuthError };
 
 let authState: AuthState = { data: null, error: null, isPending: true };
 let refreshRequest: Promise<void> | null = null;
@@ -60,13 +63,38 @@ const subscribe = (subscriber: () => void) => {
 	return () => subscribers.delete(subscriber);
 };
 
+const parseResponse = async (response: Response): Promise<ParsedResponse> => {
+	try {
+		const body = await response.text();
+		if (!body) {
+			return {
+				payload: null,
+				error: { message: "The API returned an empty response" },
+			};
+		}
+		return { payload: JSON.parse(body), error: null };
+	} catch {
+		return {
+			payload: null,
+			error: { message: "The API returned an invalid response" },
+		};
+	}
+};
+
+const isAuthError = (value: unknown): value is AuthError =>
+	typeof value === "object" &&
+	value !== null &&
+	"message" in value &&
+	typeof value.message === "string";
+
 const request = async <T>(
 	path: string,
 	init?: RequestInit,
 ): Promise<AuthResult<T>> => {
+	let response: Response;
 	try {
 		const token = localStorage.getItem(tokenKey);
-		const response = await fetch(`${baseURL}${path}`, {
+		response = await fetch(`${baseURL}${path}`, {
 			...init,
 			headers: {
 				"Content-Type": "application/json",
@@ -74,21 +102,21 @@ const request = async <T>(
 				...init?.headers,
 			},
 		});
-		const payload = (await response.json()) as T | AuthError;
-		if (!response.ok) {
-			const error = payload as AuthError;
-			return {
-				data: null,
-				error: {
-					code: error.code,
-					message: error.message || "Request failed",
-				},
-			};
-		}
-		return { data: payload as T, error: null };
 	} catch {
 		return { data: null, error: { message: "Unable to reach the API" } };
 	}
+
+	const parsed = await parseResponse(response);
+	if (parsed.error) return { data: null, error: parsed.error };
+	if (!response.ok) {
+		return {
+			data: null,
+			error: isAuthError(parsed.payload)
+				? parsed.payload
+				: { message: `Request failed with status ${response.status}` },
+		};
+	}
+	return { data: parsed.payload as T, error: null };
 };
 
 const refreshSession = () => {
