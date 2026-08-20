@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
@@ -10,7 +11,7 @@ import jwt
 
 from .store import NotFoundError, Store, UserRecord
 
-JWT_ISSUER = "template-api"
+JWT_ISSUER = "resume-screener-api"
 
 
 class InvalidCredentialsError(Exception):
@@ -55,7 +56,7 @@ class AuthService:
         name = name.strip()
         email = email.strip().lower()
         validate_credentials(name, email, password)
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=10)).decode()
+        password_hash = await to_thread(hash_password, password)
         user = await self._store.register(name, email, password_hash)
         return self.issue_token(user)
 
@@ -65,7 +66,9 @@ class AuthService:
             user, password_hash = await self._store.credentials(email)
         except NotFoundError:
             raise InvalidCredentialsError from None
-        if not bcrypt.checkpw(password.encode(), password_hash.encode()):
+        if len(password.encode()) > 72 or not await to_thread(
+            check_password, password, password_hash
+        ):
             raise InvalidCredentialsError
         return self.issue_token(user)
 
@@ -98,3 +101,14 @@ class AuthService:
             return await self._store.user(subject)
         except (jwt.InvalidTokenError, NotFoundError, InvalidCredentialsError):
             raise InvalidCredentialsError from None
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=10)).decode()
+
+
+def check_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode(), password_hash.encode())
+    except ValueError:
+        return False

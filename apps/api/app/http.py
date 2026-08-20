@@ -119,6 +119,9 @@ class RequestLoggingMiddleware:
         started = perf_counter()
         try:
             await self.app(scope, receive, tracked_send)
+        except Exception:
+            status = 500
+            raise
         finally:
             logger.info(
                 "%s %s %d %.3fs",

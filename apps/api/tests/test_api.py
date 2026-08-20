@@ -86,6 +86,11 @@ async def test_health() -> None:
     assert response.json() == {"status": "ok"}
 
 
+async def test_app_requires_complete_test_dependencies() -> None:
+    with pytest.raises(ValueError, match="store and settings must be provided together"):
+        create_app(store=FakeStore())
+
+
 async def test_signup_normalizes_email_hashes_password_and_returns_jwt() -> None:
     store = FakeStore()
     async with api_client(store) as client:
@@ -153,6 +158,17 @@ async def test_signin_rejects_invalid_password() -> None:
         "code": "INVALID_EMAIL_OR_PASSWORD",
         "message": "Invalid email or password",
     }
+
+
+async def test_signin_rejects_passwords_over_the_bcrypt_limit() -> None:
+    store = FakeStore(make_user(), bcrypt.hashpw(b"correct-password", bcrypt.gensalt()).decode())
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/auth/sign-in/email",
+            json={"email": "ada@example.com", "password": "a" * 73},
+        )
+
+    assert response.status_code == 401
 
 
 async def test_signin_reports_store_failures_as_internal_errors() -> None:

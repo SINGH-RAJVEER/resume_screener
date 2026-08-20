@@ -31,10 +31,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         settings = application.state.settings or load_settings()
         application.state.settings = settings
         engine = create_engine_for_url(settings.database_url)
-        async with engine.connect() as connection:
-            await connection.execute(text("SELECT 1"))
-        application.state.store = SQLAlchemyStore(engine)
     try:
+        if engine is not None:
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+            application.state.store = SQLAlchemyStore(engine)
         yield
     finally:
         if engine is not None:
@@ -42,6 +43,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
 
 
 def create_app(store: Store | None = None, settings: Settings | None = None) -> FastAPI:
+    if (store is None) != (settings is None):
+        raise ValueError("store and settings must be provided together")
     application = FastAPI(lifespan=lifespan)
     application.state.store = store
     application.state.settings = settings
