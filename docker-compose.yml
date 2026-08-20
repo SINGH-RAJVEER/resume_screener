@@ -32,6 +32,37 @@ services:
             WEB_URL: ${WEB_URL:-http://localhost:3000}
             JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
             JWT_TTL: ${JWT_TTL:-168h}
+            STORAGE_ROOT: /var/resume-storage
+        volumes:
+            - resume_storage:/var/resume-storage
+        depends_on:
+            postgres:
+                condition: service_healthy
+
+    worker:
+        build:
+            context: .
+            dockerfile: apps/worker/Dockerfile
+        restart: unless-stopped
+        read_only: true
+        security_opt:
+            - no-new-privileges:true
+        cap_drop:
+            - ALL
+        tmpfs:
+            - /tmp:size=64m,noexec,nosuid,nodev
+        environment:
+            DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-resume_screener}
+            STORAGE_ROOT: /var/resume-storage
+            WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+            WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+        volumes:
+            - resume_storage:/var/resume-storage:ro
+        deploy:
+            resources:
+                limits:
+                    cpus: "1"
+                    memory: 512M
         depends_on:
             postgres:
                 condition: service_healthy
@@ -50,3 +81,4 @@ services:
 
 volumes:
     postgres_data:
+    resume_storage:
