@@ -123,7 +123,8 @@ const refreshSession = () => {
 
 	refreshRequest = request<AuthSession | null>("/api/auth/session")
 		.then((result) => {
-			if (!result.data && !result.error) localStorage.removeItem(tokenKey);
+			if (!result.data && !result.error)
+				localStorage.removeItem(tokenKey);
 			setAuthState({
 				data: result.data,
 				error: result.error,
@@ -176,9 +177,12 @@ export const authClient = {
 			authenticate("/api/auth/sign-up/email", credentials),
 	},
 	signOut: async () => {
-		const result = await request<{ success: boolean }>("/api/auth/sign-out", {
-			method: "POST",
-		});
+		const result = await request<{ success: boolean }>(
+			"/api/auth/sign-out",
+			{
+				method: "POST",
+			},
+		);
 		localStorage.removeItem(tokenKey);
 		setAuthState({ data: null, error: null, isPending: false });
 		return result;

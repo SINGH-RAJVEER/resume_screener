@@ -1,5 +1,5 @@
+import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@resume-screener/ui/lib/utils";
-import { Slot } from "radix-ui";
 import type * as React from "react";
 
 function Card({ className, ...props }: React.ComponentProps<"div">) {
@@ -33,7 +33,7 @@ function CardTitle({
 	asChild = false,
 	...props
 }: React.ComponentProps<"div"> & { asChild?: boolean }) {
-	const Comp = asChild ? Slot.Root : "div";
+	const Comp = asChild ? Slot : "div";
 
 	return (
 		<Comp

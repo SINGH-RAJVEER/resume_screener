@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-.pnpm-store/
 .venv/
 __pycache__/
 *.py[cod]
@@ -11,7 +10,6 @@ __pycache__/
 # Build outputs
 dist/
 build/
-.nx/
 .devenv/
 .jj/
 
@@ -22,8 +20,6 @@ build/
 
 # Logs
 *.log
-npm-debug.log*
-pnpm-debug.log*
 bun-debug.log*
 
 # OS files

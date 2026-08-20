@@ -1,14 +1,14 @@
 {
-    "name": "@resume-screener/api",
-    "private": true,
-    "version": "0.0.1",
-    "scripts": {
-        "dev": "uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
-        "build": "uv sync --locked",
-        "start": "uv run uvicorn app.main:app --host 0.0.0.0 --port 8000",
-        "test": "uv run pytest",
-        "typecheck": "uv run pyright",
-        "lint": "uv run ruff check .",
-        "format": "uv run ruff format ."
-    }
+	"name": "@resume-screener/api",
+	"private": true,
+	"version": "0.0.1",
+	"scripts": {
+		"dev": "uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+		"build": "uv sync --locked",
+		"start": "uv run uvicorn app.main:app --host 0.0.0.0 --port 8000",
+		"test": "uv run pytest",
+		"typecheck": "uv run pyright",
+		"lint": "uv run ruff check .",
+		"format": "uv run ruff format ."
+	}
 }

@@ -53,7 +53,9 @@ export const SignUp = () => {
 								type="text"
 								autoComplete="name"
 								value={name}
-								onChange={(event) => setName(event.currentTarget.value)}
+								onChange={(event) =>
+									setName(event.currentTarget.value)
+								}
 								required
 							/>
 						</div>
@@ -64,7 +66,9 @@ export const SignUp = () => {
 								type="email"
 								autoComplete="email"
 								value={email}
-								onChange={(event) => setEmail(event.currentTarget.value)}
+								onChange={(event) =>
+									setEmail(event.currentTarget.value)
+								}
 								required
 							/>
 						</div>
@@ -77,7 +81,9 @@ export const SignUp = () => {
 								maxLength={72}
 								autoComplete="new-password"
 								value={password}
-								onChange={(event) => setPassword(event.currentTarget.value)}
+								onChange={(event) =>
+									setPassword(event.currentTarget.value)
+								}
 								required
 							/>
 						</div>
