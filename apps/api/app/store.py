@@ -29,10 +29,10 @@ class UserRecord:
     id: str
     name: str
     email: str
+    created_at: datetime
+    updated_at: datetime
     email_verified: bool = False
     image: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
 
 
 class Store(Protocol):
@@ -82,7 +82,9 @@ class SQLAlchemyStore:
             async with self._sessions.begin() as session:
                 session.add_all([user, account])
         except IntegrityError as error:
-            raise EmailAlreadyUsedError from error
+            if is_email_conflict(error):
+                raise EmailAlreadyUsedError from error
+            raise
         return to_record(user)
 
     async def credentials(self, email: str) -> tuple[UserRecord, str]:
@@ -120,3 +122,9 @@ def to_record(user: User) -> UserRecord:
 
 def create_engine_for_url(database_url: str) -> AsyncEngine:
     return create_async_engine(database_url_for_asyncpg(database_url), pool_pre_ping=True)
+
+
+def is_email_conflict(error: IntegrityError) -> bool:
+    cause = getattr(error.orig, "__cause__", None)
+    constraint = getattr(cause, "constraint_name", None)
+    return constraint in {"uq_user_email", "user_email_key"}

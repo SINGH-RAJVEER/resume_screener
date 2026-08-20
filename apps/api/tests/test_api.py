@@ -35,9 +35,8 @@ class FakeStore:
             raise self.register_error
         now = datetime.now(UTC)
         self.password_hash = password_hash
-        self.user_record = UserRecord("user-1", name, email, created_at=now, updated_at=now)
+        self.user_record = UserRecord("user-1", name, email, now, now)
         return self.user_record
-
     async def credentials(self, email: str) -> tuple[UserRecord, str]:
         if self.user_record is None or self.user_record.email != email:
             raise NotFoundError
@@ -47,6 +46,11 @@ class FakeStore:
         if self.user_record is None or self.user_record.id != user_id:
             raise NotFoundError
         return self.user_record
+
+
+def user(name: str = "Ada", email: str = "ada@example.com") -> UserRecord:
+    now = datetime.now(UTC)
+    return UserRecord("user-1", name, email, now, now)
 
 
 @pytest.fixture
@@ -71,7 +75,7 @@ async def test_health(client: ClientFactory) -> None:
 async def test_signup_normalizes_email_hashes_password_and_returns_jwt(
     client: ClientFactory,
 ) -> None:
-    store = FakeStore(UserRecord("user-1", "", ""))
+    store = FakeStore(user(name="", email=""))
     async with await client(store) as http:
         response = await http.post(
             "/api/auth/sign-up/email",
@@ -120,8 +124,8 @@ async def test_signup_validation(client: ClientFactory) -> None:
 
 @pytest.mark.asyncio
 async def test_signin_rejects_invalid_password(client: ClientFactory) -> None:
-    user = UserRecord("user-1", "Ada", "ada@example.com")
-    store = FakeStore(user, bcrypt.hashpw(b"correct-password", bcrypt.gensalt()).decode())
+    account = user()
+    store = FakeStore(account, bcrypt.hashpw(b"correct-password", bcrypt.gensalt()).decode())
     async with await client(store) as http:
         response = await http.post(
             "/api/auth/sign-in/email",
@@ -136,9 +140,9 @@ async def test_signin_rejects_invalid_password(client: ClientFactory) -> None:
 
 @pytest.mark.asyncio
 async def test_me_and_session_require_valid_jwt(client: ClientFactory) -> None:
-    user = UserRecord("user-1", "Ada", "ada@example.com")
-    store = FakeStore(user)
-    token = AuthService(store, SECRET, timedelta(hours=1)).issue_token(user)["token"]
+    account = user()
+    store = FakeStore(account)
+    token = AuthService(store, SECRET, timedelta(hours=1)).issue_token(account)["token"]
     async with await client(store) as http:
         unauthorized = await http.get("/api/me")
         authorized = await http.get("/api/me", headers={"Authorization": f"Bearer {token}"})
@@ -151,9 +155,9 @@ async def test_me_and_session_require_valid_jwt(client: ClientFactory) -> None:
 
 @pytest.mark.asyncio
 async def test_expired_jwt_is_unauthorized(client: ClientFactory) -> None:
-    user = UserRecord("user-1", "Ada", "ada@example.com")
-    store = FakeStore(user)
-    token = AuthService(store, SECRET, timedelta(hours=-1)).issue_token(user)["token"]
+    account = user()
+    store = FakeStore(account)
+    token = AuthService(store, SECRET, timedelta(hours=-1)).issue_token(account)["token"]
     async with await client(store) as http:
         response = await http.get("/api/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401

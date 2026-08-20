@@ -10,6 +10,8 @@ import jwt
 
 from .store import NotFoundError, Store, UserRecord
 
+JWT_ISSUER = "template-api"
+
 
 class InvalidCredentialsError(Exception):
     pass
@@ -54,10 +56,9 @@ class AuthService:
         email = email.strip().lower()
         try:
             user, password_hash = await self._store.credentials(email)
-            valid = bcrypt.checkpw(password.encode(), password_hash.encode())
-        except Exception:
+        except NotFoundError:
             raise InvalidCredentialsError from None
-        if not valid:
+        if not bcrypt.checkpw(password.encode(), password_hash.encode()):
             raise InvalidCredentialsError
         return self.issue_token(user)
 
@@ -65,7 +66,7 @@ class AuthService:
         now = datetime.now(UTC)
         expires_at = now + self._jwt_ttl
         claims = {
-            "iss": "template-api",
+            "iss": JWT_ISSUER,
             "sub": user.id,
             "iat": int(now.timestamp()),
             "exp": int(expires_at.timestamp()),
@@ -86,8 +87,8 @@ class AuthService:
                 token,
                 self._jwt_secret,
                 algorithms=["HS256"],
-                issuer="template-api",
-                options={"require": ["exp"]},
+                issuer=JWT_ISSUER,
+                options={"require": ["exp", "sub"]},
             )
             subject = claims.get("sub")
             if not isinstance(subject, str) or not subject:

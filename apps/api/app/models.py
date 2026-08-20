@@ -10,10 +10,11 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "user"
+    __table_args__ = (UniqueConstraint("email", name="uq_user_email"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
     email_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
@@ -28,7 +29,9 @@ class User(Base):
 
 class Account(Base):
     __tablename__ = "account"
-    __table_args__ = (UniqueConstraint("provider_id", "account_id"),)
+    __table_args__ = (
+        UniqueConstraint("provider_id", "account_id", name="uq_account_provider_account"),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     account_id: Mapped[str] = mapped_column(Text, nullable=False)
