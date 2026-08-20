@@ -1,19 +1,15 @@
-FROM golang:1.24-alpine AS builder
-WORKDIR /src/apps/api
+FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
+FROM python:3.13-slim-bookworm
+COPY --from=uv /uv /uvx /bin/
+WORKDIR /app/apps/api
 
-COPY apps/api/go.mod apps/api/go.sum ./
-RUN go mod download
+COPY apps/api/pyproject.toml apps/api/uv.lock ./
+RUN uv sync --frozen --no-dev
 
 COPY apps/api/ ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /api ./cmd/api
-
-FROM alpine:3.22 AS runner
-RUN apk add --no-cache ca-certificates \
-    && addgroup -S app \
-    && adduser -S -G app app
+RUN useradd --create-home app && chown -R app:app /app
 USER app
-COPY --from=builder /api /app/api
 
 EXPOSE 8000
 
-CMD ["/app/api"]
+CMD ["sh", "-c", "uv run alembic upgrade head && exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
