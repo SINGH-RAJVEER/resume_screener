@@ -47,7 +47,6 @@ def create_app(store: Store | None = None, settings: Settings | None = None) -> 
     if settings is None:
         settings = Settings(
             database_url="",
-            port=8000,
             web_url=os.environ.get("WEB_URL", "") or "http://localhost:3000",
             jwt_secret="",
             jwt_ttl=timedelta(days=7),

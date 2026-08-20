@@ -16,7 +16,6 @@ from app.store import EmailAlreadyUsedError, NotFoundError, UserRecord
 SECRET = "test-secret-that-is-at-least-32-characters"
 SETTINGS = Settings(
     database_url="postgresql://unused/template",
-    port=8000,
     web_url="http://localhost:3000",
     jwt_secret=SECRET,
     jwt_ttl=timedelta(days=1),

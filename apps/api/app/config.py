@@ -9,7 +9,6 @@ from datetime import timedelta
 @dataclass(frozen=True)
 class Settings:
     database_url: str
-    port: int
     web_url: str
     jwt_secret: str
     jwt_ttl: timedelta
@@ -22,16 +21,12 @@ def load_settings() -> Settings:
     jwt_secret = os.environ.get("JWT_SECRET", "")
     if len(jwt_secret) < 32:
         raise ValueError("JWT_SECRET environment variable must be at least 32 characters")
-    port_text = os.environ.get("PORT", "") or "8000"
-    if port_text != "8000":
-        raise ValueError("PORT must be 8000")
     ttl_text = os.environ.get("JWT_TTL", "") or "168h"
     jwt_ttl = parse_duration(ttl_text)
     if jwt_ttl <= timedelta(0):
         raise ValueError("JWT_TTL must be a positive duration")
     return Settings(
         database_url=database_url,
-        port=8000,
         web_url=os.environ.get("WEB_URL", "") or "http://localhost:3000",
         jwt_secret=jwt_secret,
         jwt_ttl=jwt_ttl,
