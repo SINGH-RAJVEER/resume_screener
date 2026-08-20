@@ -1,19 +1,19 @@
 {
-    "style": "new-york",
-    "rsc": false,
-    "tsx": true,
-    "tailwind": {
-        "config": "",
-        "css": "../../libs/ui/src/styles/globals.css",
-        "baseColor": "neutral",
-        "cssVariables": true
-    },
-    "iconLibrary": "lucide",
-    "aliases": {
-        "components": "#components",
-        "hooks": "#hooks",
-        "lib": "#lib",
-        "utils": "@resume-screener/ui/lib/utils",
-        "ui": "@resume-screener/ui/components"
-    }
+	"style": "new-york",
+	"rsc": false,
+	"tsx": true,
+	"tailwind": {
+		"config": "",
+		"css": "../../libs/ui/src/styles/globals.css",
+		"baseColor": "neutral",
+		"cssVariables": true
+	},
+	"iconLibrary": "lucide",
+	"aliases": {
+		"components": "#components",
+		"hooks": "#hooks",
+		"lib": "#lib",
+		"utils": "@resume-screener/ui/lib/utils",
+		"ui": "@resume-screener/ui/components"
+	}
 }
