@@ -11,22 +11,22 @@ branch_labels = None
 depends_on = None
 
 USER_COLUMNS = {
-    "id": False,
-    "name": False,
-    "email": False,
-    "email_verified": False,
-    "image": True,
-    "created_at": False,
-    "updated_at": False,
+    "id": (False, "text"),
+    "name": (False, "text"),
+    "email": (False, "text"),
+    "email_verified": (False, "boolean"),
+    "image": (True, "text"),
+    "created_at": (False, "datetime"),
+    "updated_at": (False, "datetime"),
 }
 ACCOUNT_COLUMNS = {
-    "id": False,
-    "account_id": False,
-    "provider_id": False,
-    "user_id": False,
-    "password": True,
-    "created_at": False,
-    "updated_at": False,
+    "id": (False, "text"),
+    "account_id": (False, "text"),
+    "provider_id": (False, "text"),
+    "user_id": (False, "text"),
+    "password": (True, "text"),
+    "created_at": (False, "datetime"),
+    "updated_at": (False, "datetime"),
 }
 
 
@@ -103,31 +103,38 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    inspector = inspect(op.get_bind())
-    if has_constraint(inspector, "account", "uq_account_provider_account"):
-        op.drop_table("account")
-    if has_constraint(inspector, "user", "uq_user_email"):
-        op.drop_table("user")
+    raise RuntimeError("The initial migration cannot be downgraded safely")
 
 
 def require_table(
     inspector: sa.Inspector,
     table: str,
-    expected_columns: dict[str, bool],
+    expected_columns: dict[str, tuple[bool, str]],
     primary_key: set[str],
     unique_constraints: set[frozenset[str]],
 ) -> None:
-    columns = {column["name"]: column["nullable"] for column in inspector.get_columns(table)}
+    columns = {column["name"]: column for column in inspector.get_columns(table)}
     missing = sorted(expected_columns.keys() - columns.keys())
     if missing:
         names = ", ".join(missing)
         raise RuntimeError(f"Existing {table} table is missing columns: {names}")
-    wrong_nullability = sorted(
-        name for name, nullable in expected_columns.items() if columns[name] != nullable
+    incompatible = sorted(
+        name
+        for name, (nullable, kind) in expected_columns.items()
+        if columns[name]["nullable"] != nullable or column_kind(columns[name]["type"]) != kind
     )
-    if wrong_nullability:
-        names = ", ".join(wrong_nullability)
+    if incompatible:
+        names = ", ".join(incompatible)
         raise RuntimeError(f"Existing {table} table has incompatible columns: {names}")
+
+    extra_required = sorted(
+        name
+        for name, column in columns.items()
+        if name not in expected_columns and not column["nullable"] and column["default"] is None
+    )
+    if extra_required:
+        names = ", ".join(extra_required)
+        raise RuntimeError(f"Existing {table} table has unsupported required columns: {names}")
 
     existing_primary_key = set(inspector.get_pk_constraint(table)["constrained_columns"])
     if existing_primary_key != primary_key:
@@ -153,7 +160,11 @@ def require_account_user_foreign_key(inspector: sa.Inspector) -> None:
     raise RuntimeError("Existing account table has an incompatible user foreign key")
 
 
-def has_constraint(inspector: sa.Inspector, table: str, name: str) -> bool:
-    if not inspector.has_table(table):
-        return False
-    return any(constraint["name"] == name for constraint in inspector.get_unique_constraints(table))
+def column_kind(column_type: object) -> str:
+    if isinstance(column_type, sa.Text):
+        return "text"
+    if isinstance(column_type, sa.Boolean):
+        return "boolean"
+    if isinstance(column_type, sa.DateTime) and column_type.timezone:
+        return "datetime"
+    return "unsupported"
