@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
+from .parser import DocumentParseError, extract_blocks
 
 logger = logging.getLogger("resume-screener.worker")
 
@@ -115,21 +116,18 @@ class Worker:
 			row = result.mappings().one_or_none()
 		if row is None:
 			raise NonRetryableJobError("Resume version not found")
-		if row["media_type"] != "text/plain":
-			raise NonRetryableJobError("Resume parser is not configured for this document type")
 		content = self._read_object(str(row["storage_key"]))
 		try:
-			resume_text = content.decode("utf-8")
-		except UnicodeDecodeError as error:
-			raise NonRetryableJobError("Resume text is not UTF-8") from error
-		blocks = {"blocks": [{"id": "p1-b1", "page": 1, "text": resume_text}]}
+			blocks = extract_blocks(content, str(row["media_type"]))
+		except DocumentParseError as error:
+			raise NonRetryableJobError(str(error)) from error
 		async with self._engine.begin() as connection:
 			await connection.execute(
 				text(
 					"""
 					UPDATE resume_version
 					SET extraction_blocks = CAST(:blocks AS jsonb), quality_state = 'ready',
-						parser_version = 'text-1'
+						parser_version = 'local-1'
 					WHERE id = :version_id
 						AND EXISTS (
 							SELECT 1 FROM processing_job
