@@ -1,3 +1,5 @@
+@source "./**/*.{ts,tsx}";
+
 .app-shell {
 	display: grid;
 	min-height: 100svh;
