@@ -8,7 +8,15 @@ import { Link } from "react-router-dom";
 import { authClient } from "./lib/auth-client";
 
 const App = () => {
-	const { data: session } = authClient.useSession();
+	const { data: session, isPending } = authClient.useSession();
+
+	if (isPending) {
+		return (
+			<main className="app-shell">
+				<p className="muted-copy">Checking your session...</p>
+			</main>
+		);
+	}
 
 	return (
 		<main className="app-shell">

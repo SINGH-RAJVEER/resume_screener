@@ -9,10 +9,11 @@ import {
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
 
 export const SignIn = () => {
+	const navigate = useNavigate();
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [error, setError] = useState<string | null>(null);
@@ -24,10 +25,13 @@ export const SignIn = () => {
 		const { error: authError } = await authClient.signIn.email({
 			email,
 			password,
-			callbackURL: "/",
 		});
 
-		if (authError) setError(authError.message ?? "Sign in failed");
+		if (authError) {
+			setError(authError.message ?? "Sign in failed");
+			return;
+		}
+		navigate("/");
 	};
 
 	return (
@@ -35,7 +39,9 @@ export const SignIn = () => {
 			<Card className="auth-card">
 				<form onSubmit={handleSubmit}>
 					<CardHeader>
-						<CardTitle className="auth-title">Sign In</CardTitle>
+						<CardTitle asChild className="auth-title">
+							<h1>Sign In</h1>
+						</CardTitle>
 					</CardHeader>
 					<CardContent className="auth-fields">
 						<div className="form-field">

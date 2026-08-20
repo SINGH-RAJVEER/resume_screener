@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from .auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
@@ -12,20 +12,18 @@ from .store import EmailAlreadyUsedError, Store, UserRecord
 
 
 class RequestModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class SignUpRequest(RequestModel):
     name: str = ""
     email: str = ""
     password: str = ""
-    callback_url: str = Field("", alias="callbackURL")
 
 
 class SignInRequest(RequestModel):
     email: str = ""
     password: str = ""
-    callback_url: str = Field("", alias="callbackURL")
 
 
 class ResponseModel(BaseModel):

@@ -35,7 +35,6 @@ interface AuthState {
 interface Credentials {
 	email: string;
 	password: string;
-	callbackURL?: string;
 }
 
 interface SignUpCredentials extends Credentials {
@@ -152,8 +151,6 @@ const authenticate = async (
 			error: null,
 			isPending: false,
 		});
-		if (credentials.callbackURL)
-			window.location.assign(credentials.callbackURL);
 	}
 	return result;
 };
