@@ -5,6 +5,7 @@ import App from "./App";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
 import "@resume-screener/ui/globals.css";
+import "./styles.css";
 
 const root = document.getElementById("root");
 

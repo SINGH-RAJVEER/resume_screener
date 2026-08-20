@@ -3,99 +3,60 @@
 @source "../../../../apps/web/src/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
-.app-shell {
-	display: grid;
-	min-height: 100svh;
-	place-items: center;
-	padding: 3rem 1rem;
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
 }
 
-.home-card {
-	width: 100%;
-	max-width: 32rem;
+:root {
+	--radius: 0.625rem;
+	--background: oklch(1 0 0);
+	--foreground: oklch(0.145 0 0);
+	--card: oklch(1 0 0);
+	--card-foreground: oklch(0.145 0 0);
+	--popover: oklch(1 0 0);
+	--popover-foreground: oklch(0.145 0 0);
+	--primary: oklch(0.205 0 0);
+	--primary-foreground: oklch(0.985 0 0);
+	--secondary: oklch(0.97 0 0);
+	--secondary-foreground: oklch(0.205 0 0);
+	--muted: oklch(0.97 0 0);
+	--muted-foreground: oklch(0.556 0 0);
+	--accent: oklch(0.97 0 0);
+	--accent-foreground: oklch(0.205 0 0);
+	--destructive: oklch(0.577 0.245 27.325);
+	--border: oklch(0.922 0 0);
+	--input: oklch(0.922 0 0);
+	--ring: oklch(0.708 0 0);
 }
 
-.session-panel {
-	padding: 1rem;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg);
-	background: color-mix(in oklch, var(--muted) 45%, transparent);
+* {
+	border-color: var(--border);
 }
 
-.muted-copy {
+body {
 	margin: 0;
-	color: var(--muted-foreground);
-	font-size: 0.875rem;
-}
-
-.session-name {
-	margin: 0.25rem 0 0;
-	font-size: 1.125rem;
-	font-weight: 500;
-}
-
-.home-prompt {
-	line-height: 1.5rem;
-}
-
-.home-actions {
-	gap: 0.75rem;
-}
-
-.auth-card {
-	width: 100%;
-	max-width: 28rem;
-}
-
-.auth-title {
-	font-size: 1.5rem;
-	line-height: 2rem;
-}
-
-.auth-fields {
-	display: grid;
-	gap: 1.25rem;
-	margin-top: 1.5rem;
-}
-
-.form-field {
-	display: grid;
-	gap: 0.5rem;
-}
-
-.form-error {
-	margin: 0;
-	color: var(--destructive);
-	font-size: 0.875rem;
-}
-
-.auth-footer {
-	flex-direction: column;
-	align-items: stretch;
-	gap: 1rem;
-	margin-top: 1.5rem;
-}
-
-.auth-submit {
-	width: 100%;
-	border: 1px solid var(--foreground);
 	background: var(--background);
 	color: var(--foreground);
-}
-
-.auth-submit:hover {
-	background: var(--muted);
-}
-
-.auth-switch {
-	margin: 0;
-	color: var(--muted-foreground);
-	font-size: 0.875rem;
-	text-align: center;
-}
-
-.auth-link {
-	color: var(--foreground);
-	font-weight: 500;
-	text-decoration: underline;
+	font-family: ui-sans-serif, system-ui, sans-serif;
 }

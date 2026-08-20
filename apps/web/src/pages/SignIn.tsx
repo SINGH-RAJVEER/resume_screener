@@ -30,7 +30,7 @@ export const SignIn = () => {
 	};
 
 	return (
-		<main className="app-shell auth-page">
+		<main className="app-shell">
 			<Card className="auth-card">
 				<form onSubmit={handleSubmit}>
 					<CardHeader>
@@ -62,7 +62,7 @@ export const SignIn = () => {
 						{error && <p className="form-error">{error}</p>}
 					</CardContent>
 					<CardFooter className="auth-footer">
-						<Button type="submit" className="auth-submit">
+						<Button type="submit" className="w-full">
 							Sign In
 						</Button>
 						<p className="auth-switch">
