@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -9,6 +8,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from app.config import load_database_url
 from app.models import Base
 from app.store import database_url_for_asyncpg
 
@@ -19,13 +19,6 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def database_url() -> str:
-    value = os.environ.get("DATABASE_URL")
-    if not value:
-        raise RuntimeError("DATABASE_URL environment variable is required")
-    return value
-
-
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
@@ -34,7 +27,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = database_url_for_asyncpg(database_url())
+    configuration["sqlalchemy.url"] = database_url_for_asyncpg(load_database_url())
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",

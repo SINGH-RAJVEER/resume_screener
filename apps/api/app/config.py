@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from sqlalchemy import URL
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -15,9 +17,6 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    database_url = os.environ.get("DATABASE_URL", "")
-    if not database_url:
-        raise ValueError("DATABASE_URL environment variable is required")
     jwt_secret = os.environ.get("JWT_SECRET", "")
     if len(jwt_secret) < 32:
         raise ValueError("JWT_SECRET environment variable must be at least 32 characters")
@@ -26,11 +25,37 @@ def load_settings() -> Settings:
     if jwt_ttl <= timedelta(0):
         raise ValueError("JWT_TTL must be a positive duration")
     return Settings(
-        database_url=database_url,
+        database_url=load_database_url(),
         web_url=os.environ.get("WEB_URL", "") or "http://localhost:3000",
         jwt_secret=jwt_secret,
         jwt_ttl=jwt_ttl,
     )
+
+
+def load_database_url() -> str:
+    if database_url := os.environ.get("DATABASE_URL"):
+        return database_url
+
+    names = ["DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD"]
+    values = {name: os.environ.get(name, "") for name in names}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise ValueError(f"Missing database environment variables: {', '.join(missing)}")
+
+    port_text = os.environ.get("DATABASE_PORT", "5432")
+    try:
+        port = int(port_text)
+    except ValueError as error:
+        raise ValueError("DATABASE_PORT must be an integer") from error
+
+    return URL.create(
+        "postgresql+asyncpg",
+        username=values["DATABASE_USER"],
+        password=values["DATABASE_PASSWORD"],
+        host=values["DATABASE_HOST"],
+        port=port,
+        database=values["DATABASE_NAME"],
+    ).render_as_string(hide_password=False)
 
 
 def parse_duration(value: str) -> timedelta:
