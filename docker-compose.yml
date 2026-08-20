@@ -18,8 +18,8 @@ services:
 
     api:
         build:
-            context: ..
-            dockerfile: docker/Dockerfile.api
+            context: .
+            dockerfile: apps/api/Dockerfile.api
         restart: unless-stopped
         ports:
             - "8000:8000"
@@ -38,8 +38,8 @@ services:
 
     web:
         build:
-            context: ..
-            dockerfile: docker/Dockerfile.web
+            context: .
+            dockerfile: apps/web/Dockerfile.web
             args:
                 VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         restart: unless-stopped
