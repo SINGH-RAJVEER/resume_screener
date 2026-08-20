@@ -1,5 +1,5 @@
-import { Button } from "@template/ui/components/button";
-import { Card, CardContent, CardFooter } from "@template/ui/components/card";
+import { Button } from "@resume-screener/ui/components/button";
+import { Card, CardContent, CardFooter } from "@resume-screener/ui/components/card";
 import { authClient } from "./lib/auth-client";
 
 const App = () => {

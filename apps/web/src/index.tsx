@@ -4,7 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import App from "./App";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
-import "@template/ui/globals.css";
+import "@resume-screener/ui/globals.css";
 
 const root = document.getElementById("root");
 

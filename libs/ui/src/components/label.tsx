@@ -1,4 +1,4 @@
-import { cn } from "@template/ui/lib/utils";
+import { cn } from "@resume-screener/ui/lib/utils";
 import { Label as LabelPrimitive } from "radix-ui";
 import type * as React from "react";
 

@@ -1,7 +1,13 @@
-import { Button } from "@template/ui/components/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@template/ui/components/card";
-import { Input } from "@template/ui/components/input";
-import { Label } from "@template/ui/components/label";
+import { Button } from "@resume-screener/ui/components/button";
+import {
+    Card,
+    CardContent,
+    CardFooter,
+    CardHeader,
+    CardTitle
+} from "@resume-screener/ui/components/card";
+import { Input } from "@resume-screener/ui/components/input";
+import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useState } from "react";
 import { authClient } from "../lib/auth-client";
 

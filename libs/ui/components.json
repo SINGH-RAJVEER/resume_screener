@@ -10,10 +10,10 @@
     },
     "iconLibrary": "lucide",
     "aliases": {
-        "components": "@template/ui/components",
-        "hooks": "@template/ui/hooks",
-        "lib": "@template/ui/lib",
-        "utils": "@template/ui/lib/utils",
-        "ui": "@template/ui/components"
+        "components": "@resume-screener/ui/components",
+        "hooks": "@resume-screener/ui/hooks",
+        "lib": "@resume-screener/ui/lib",
+        "utils": "@resume-screener/ui/lib/utils",
+        "ui": "@resume-screener/ui/components"
     }
 }

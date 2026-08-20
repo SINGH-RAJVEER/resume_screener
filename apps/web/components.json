@@ -13,7 +13,7 @@
         "components": "#components",
         "hooks": "#hooks",
         "lib": "#lib",
-        "utils": "@template/ui/lib/utils",
-        "ui": "@template/ui/components"
+        "utils": "@resume-screener/ui/lib/utils",
+        "ui": "@resume-screener/ui/components"
     }
 }

@@ -1,5 +1,5 @@
 {
-    "name": "@template/web",
+    "name": "@resume-screener/web",
     "private": true,
     "version": "0.0.1",
     "imports": {
@@ -15,7 +15,7 @@
         "lint": "biome check src/"
     },
     "dependencies": {
-        "@template/ui": "workspace:*",
+        "@resume-screener/ui": "workspace:*",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
         "react-router-dom": "^7.18.1"

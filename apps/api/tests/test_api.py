@@ -15,7 +15,7 @@ from app.store import EmailAlreadyUsedError, NotFoundError, Store, UserRecord
 
 SECRET = "test-secret-that-is-at-least-32-characters"
 SETTINGS = Settings(
-    database_url="postgresql://unused/template",
+    database_url="postgresql://unused/resume_screener",
     web_url="http://localhost:3000",
     jwt_secret=SECRET,
     jwt_ttl=timedelta(days=1),

@@ -1,4 +1,4 @@
-import { cn } from "@template/ui/lib/utils";
+import { cn } from "@resume-screener/ui/lib/utils";
 import type * as React from "react";
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
