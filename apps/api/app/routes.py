@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
 from .http import APIError
+from .ingestion import DocumentValidationError, validate_resume
 from .models import (
 	CandidateRecord,
 	Job,
@@ -25,6 +26,7 @@ from .models import (
 	ResumeSubmission,
 	ResumeVersion,
 )
+from .storage import LocalObjectStorage
 from .store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
 
 
@@ -314,28 +316,15 @@ async def upload_resume(
 	user = await require_user(request)
 	store = require_sqlalchemy_store(request)
 	content = await file.read()
-	if not content or len(content) > 20 * 1024 * 1024:
-		raise APIError(400, "INVALID_DOCUMENT", "Resume must be between 1 byte and 20 MB")
-	media_types = {
-		"application/pdf": ".pdf",
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-		"text/plain": ".txt",
-	}
-	if file.content_type not in media_types:
-		raise APIError(400, "INVALID_DOCUMENT", "Resume must be a PDF, DOCX, or TXT file")
-	if file.content_type == "application/pdf" and not content.startswith(b"%PDF-"):
-		raise APIError(400, "INVALID_DOCUMENT", "Resume content is not a PDF")
-	if (
-		file.content_type
-		== "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-		and not content.startswith(b"PK\x03\x04")
-	):
-		raise APIError(400, "INVALID_DOCUMENT", "Resume content is not a DOCX file")
+	try:
+		validated = validate_resume(content, file.content_type, file.filename)
+	except DocumentValidationError as error:
+		raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
 	async with store.sessions().begin() as session:
 		job = await session.get(Job, job_id)
 		if job is None:
 			raise APIError(404, "NOT_FOUND", "Job not found")
-		await require_membership(session, job.organization_id, user.id)
+		await require_write_membership(session, job.organization_id, user.id)
 		candidate = CandidateRecord(
 			id=new_id(), organization_id=job.organization_id, full_name=candidate_name or None
 		)
@@ -343,9 +332,9 @@ async def upload_resume(
 			id=new_id(),
 			organization_id=job.organization_id,
 			candidate_record_id=candidate.id,
-			storage_key=f"resumes/{new_id()}{media_types[file.content_type]}",
+			storage_key=f"resumes/{new_id()}{validated.extension}",
 			checksum=sha256(content).hexdigest(),
-			media_type=file.content_type,
+			media_type=validated.media_type,
 			size_bytes=len(content),
 			original_name=file.filename or "resume",
 			retention_date=datetime.now(UTC) + timedelta(days=90),
@@ -371,9 +360,9 @@ async def upload_resume(
 			idempotency_key=new_id(),
 		)
 		session.add_all([candidate, document, version, submission, processing])
-		storage_path = Path(".local-storage") / document.storage_key
-		storage_path.parent.mkdir(parents=True, exist_ok=True)
-		storage_path.write_bytes(content)
+		LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
+			document.storage_key, content
+		)
 	return {"processingJobId": processing.id, "submissionId": submission.id}
 
 

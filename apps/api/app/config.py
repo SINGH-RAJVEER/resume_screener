@@ -14,6 +14,7 @@ class Settings:
     web_url: str
     jwt_secret: str
     jwt_ttl: timedelta
+    storage_root: str = ".local-storage"
 
 
 def load_settings() -> Settings:
@@ -29,6 +30,7 @@ def load_settings() -> Settings:
         web_url=os.environ.get("WEB_URL", "") or "http://localhost:3000",
         jwt_secret=jwt_secret,
         jwt_ttl=jwt_ttl,
+        storage_root=os.environ.get("STORAGE_ROOT", "") or ".local-storage",
     )
 
 
