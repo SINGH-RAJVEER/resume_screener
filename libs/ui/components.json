@@ -11,7 +11,6 @@
 	"iconLibrary": "lucide",
 	"aliases": {
 		"components": "@resume-screener/ui/components",
-		"hooks": "@resume-screener/ui/hooks",
 		"lib": "@resume-screener/ui/lib",
 		"utils": "@resume-screener/ui/lib/utils",
 		"ui": "@resume-screener/ui/components"
