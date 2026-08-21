@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
 from ..core.http import APIError
-from ..documents.ingestion import DocumentValidationError, validate_resume
+from ..documents.ingestion import (
+    DocumentValidationError,
+    inspect_resume_zip,
+    media_type_for_name,
+    validate_resume,
+)
 from ..documents.storage import LocalObjectStorage
 from ..jobs.requirement_drafts import draft_requirements
 from ..persistence.models import (
@@ -602,6 +607,89 @@ async def upload_resume(
         "submissionId": submission.id,
         "evaluationId": evaluation.id,
     }
+
+
+@router.post("/api/jobs/{job_id}/resume-batches", status_code=202)
+async def upload_resume_batch(
+    job_id: str, request: Request, archive: UploadFile = File()
+) -> dict[str, object]:
+    """Queue each valid ZIP entry independently, reporting unsafe entries without storing them."""
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    if archive.content_type not in {"application/zip", "application/x-zip-compressed"}:
+        raise APIError(400, "INVALID_DOCUMENT", "Resume batch must be a ZIP file")
+    try:
+        entries = inspect_resume_zip(await archive.read())
+    except DocumentValidationError as error:
+        raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
+    accepted: list[dict[str, str]] = []
+    rejected = [
+        {"name": entry.name, "reason": entry.reason}
+        for entry in entries
+        if entry.reason is not None
+    ]
+    async with store.sessions().begin() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise APIError(404, "NOT_FOUND", "Job not found")
+        await require_write_membership(session, job.organization_id, user.id)
+        job_version = await latest_job_version(session, job.id)
+        if job_version.confirmed_at is None:
+            raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
+        storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
+        for entry in entries:
+            if entry.content is None:
+                continue
+            validated = validate_resume(entry.content, media_type_for_name(entry.name), entry.name)
+            candidate = CandidateRecord(id=new_id(), organization_id=job.organization_id)
+            document = ResumeDocument(
+                id=new_id(),
+                organization_id=job.organization_id,
+                candidate_record_id=candidate.id,
+                storage_key=f"resumes/{new_id()}{validated.extension}",
+                checksum=sha256(entry.content).hexdigest(),
+                media_type=validated.media_type,
+                size_bytes=len(entry.content),
+                original_name=entry.name,
+                retention_date=datetime.now(UTC) + timedelta(days=90),
+            )
+            version = ResumeVersion(
+                id=new_id(),
+                organization_id=job.organization_id,
+                resume_document_id=document.id,
+                version=1,
+            )
+            submission = ResumeSubmission(
+                id=new_id(),
+                organization_id=job.organization_id,
+                job_id=job.id,
+                candidate_record_id=candidate.id,
+                resume_version_id=version.id,
+                submitting_user_id=user.id,
+            )
+            processing = ProcessingJob(
+                id=new_id(),
+                type="resume_processing",
+                payload_reference=version.id,
+                idempotency_key=new_id(),
+            )
+            evaluation = Evaluation(
+                id=new_id(),
+                resume_submission_id=submission.id,
+                job_version_id=job_version.id,
+                resume_version_id=version.id,
+            )
+            session.add_all([candidate, document, version, submission, processing, evaluation])
+            storage.put(document.storage_key, entry.content)
+            accepted.append(
+                {
+                    "name": entry.name,
+                    "processingJobId": processing.id,
+                    "submissionId": submission.id,
+                    "evaluationId": evaluation.id,
+                }
+            )
+    return {"accepted": accepted, "rejected": rejected}
 
 
 @router.get("/api/processing-jobs/{processing_job_id}")
