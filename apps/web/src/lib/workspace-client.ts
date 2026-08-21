@@ -29,6 +29,7 @@ export interface JobDetail {
 	description: string;
 	confirmed: boolean;
 	requirements: Requirement[];
+	draftRequirements: Array<{ stableId: string; normalizedText: string }>;
 }
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {

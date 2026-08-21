@@ -11,12 +11,12 @@ import {
 	workspaceClient,
 } from "../lib/workspace-client";
 
-const requirementFromLine = (line: string, index: number): Requirement => ({
-	stableId: `requirement-${index + 1}`,
-	normalizedText: line,
-	kind: "required",
-	weight: 2,
-});
+const draftsToRequirements = (job: JobDetail): Requirement[] =>
+	job.draftRequirements.map((requirement) => ({
+		...requirement,
+		kind: "required",
+		weight: 2,
+	}));
 
 export const Workspace = () => {
 	const { data: session, isPending } = authClient.useSession();
@@ -130,15 +130,9 @@ export const Workspace = () => {
 				jobTitle,
 				description,
 			);
-			setRequirements(
-				description
-					.split("\n")
-					.map((line) => line.trim())
-					.filter(Boolean)
-					.slice(0, 8)
-					.map(requirementFromLine),
-			);
-			setSelectedJob(await workspaceClient.job(job.id));
+			const detail = await workspaceClient.job(job.id);
+			setSelectedJob(detail);
+			setRequirements(draftsToRequirements(detail));
 			setJobTitle("");
 			setDescription("");
 			await loadJobs(organizationId);
@@ -160,12 +154,7 @@ export const Workspace = () => {
 							...requirement,
 							normalizedText: requirement.text,
 						}))
-					: detail.description
-							.split("\n")
-							.map((line) => line.trim())
-							.filter(Boolean)
-							.slice(0, 8)
-							.map(requirementFromLine),
+					: draftsToRequirements(detail),
 			);
 		} catch (reason) {
 			reportError(reason);

@@ -26,6 +26,7 @@ from .models import (
 	ResumeSubmission,
 	ResumeVersion,
 )
+from .requirement_drafts import draft_requirements
 from .storage import LocalObjectStorage
 from .store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
 
@@ -234,6 +235,7 @@ async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]
 		source_text=input_data.description,
 		normalized_text=input_data.description.strip(),
 		source_media_type="text/plain",
+		draft_requirements={"requirements": draft_requirements(input_data.description)},
 	)
 	async with store.sessions().begin() as session:
 		await require_write_membership(session, input_data.organization_id, user.id)
@@ -264,6 +266,9 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
 			"title": job.title,
 			"description": version.source_text,
 			"confirmed": version.confirmed_at is not None,
+			"draftRequirements": version.draft_requirements.get("requirements", [])
+			if version.draft_requirements
+			else [],
 			"requirements": [
 				{
 					"id": requirement.id,
