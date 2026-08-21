@@ -11,6 +11,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.14-slim-bookworm
 RUN useradd --create-home --no-log-init --uid 10001 app
+# Named volumes seed ownership from the image mount point; the API writes
+# uploaded resumes here as the non-root app user.
+RUN mkdir -p /var/resume-storage && chown app:app /var/resume-storage
 WORKDIR /app
 
 COPY --from=builder /app/.venv ./.venv
