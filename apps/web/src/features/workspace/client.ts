@@ -78,15 +78,19 @@ export const workspaceClient = {
 	createJob: (organizationId: string, title: string, description: string) =>
 		request<{ id: string }>("/api/jobs", {
 			method: "POST",
-			body: JSON.stringify({ organizationId, title, description }),
+			body: JSON.stringify({
+				organization_id: organizationId,
+				title,
+				description,
+			}),
 		}),
 	confirmRequirements: (jobId: string, requirements: Requirement[]) =>
 		request<{ confirmed: boolean }>(`/api/jobs/${jobId}/requirements`, {
 			method: "POST",
 			body: JSON.stringify({
 				requirements: requirements.map((requirement) => ({
-					stableId: requirement.stableId,
-					normalizedText:
+					stable_id: requirement.stableId,
+					normalized_text:
 						requirement.normalizedText ?? requirement.text ?? "",
 					kind: requirement.kind,
 					weight: requirement.weight,
@@ -105,5 +109,10 @@ export const workspaceClient = {
 	processingJob: (processingJobId: string) =>
 		request<{ id: string; status: string; safeError: string | null }>(
 			`/api/processing-jobs/${processingJobId}`,
+		),
+	createInvitation: (jobId: string) =>
+		request<{ id: string; token: string; expiresAt: string }>(
+			`/api/jobs/${jobId}/invitations`,
+			{ method: "POST", body: JSON.stringify({ expires_in_hours: 168 }) },
 		),
 };
