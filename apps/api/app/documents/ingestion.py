@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePath
+from stat import S_IFLNK, S_IFMT
 from zipfile import BadZipFile, ZipFile
 
 MAX_RESUME_BYTES = 20 * 1024 * 1024
+MAX_BATCH_FILES = 500
+MAX_BATCH_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
 SUPPORTED_RESUME_TYPES = {
 	"application/pdf": ".pdf",
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
@@ -21,6 +25,13 @@ class DocumentValidationError(ValueError):
 class ValidatedResume:
 	media_type: str
 	extension: str
+
+
+@dataclass(frozen=True)
+class BatchEntry:
+	name: str
+	content: bytes | None
+	reason: str | None
 
 
 def validate_resume(
@@ -52,3 +63,53 @@ def validate_docx(content: bytes) -> None:
 		raise DocumentValidationError("Resume content is not a DOCX file")
 	if any(name.casefold().endswith("vbaproject.bin") for name in names):
 		raise DocumentValidationError("Macro-enabled Office documents are not supported")
+
+
+def inspect_resume_zip(content: bytes) -> list[BatchEntry]:
+	try:
+		archive = ZipFile(BytesIO(content))
+	except BadZipFile as error:
+		raise DocumentValidationError("Resume ZIP file is malformed") from error
+	with archive:
+		entries = [entry for entry in archive.infolist() if not entry.is_dir()]
+		if len(entries) > MAX_BATCH_FILES:
+			raise DocumentValidationError("Resume ZIP exceeds 500 files")
+		if sum(entry.file_size for entry in entries) > MAX_BATCH_UNCOMPRESSED_BYTES:
+			raise DocumentValidationError("Resume ZIP exceeds 500 MB uncompressed")
+		result: list[BatchEntry] = []
+		for entry in entries:
+			reason = zip_entry_reason(
+				entry.filename, entry.external_attr, entry.compress_size, entry.file_size
+			)
+			if reason:
+				result.append(BatchEntry(entry.filename, None, reason))
+				continue
+			entry_content = archive.read(entry)
+			try:
+				validate_resume(entry_content, media_type_for_name(entry.filename), entry.filename)
+			except DocumentValidationError as error:
+				result.append(BatchEntry(entry.filename, None, str(error)))
+			else:
+				result.append(BatchEntry(entry.filename, entry_content, None))
+		return result
+
+
+def zip_entry_reason(
+	filename: str, external_attr: int, compressed_size: int, file_size: int
+) -> str | None:
+	if PurePath(filename).is_absolute() or ".." in PurePath(filename).parts:
+		return "ZIP entry has an unsafe path"
+	if S_IFMT(external_attr >> 16) == S_IFLNK:
+		return "ZIP entry is a symlink"
+	if filename.casefold().endswith(".zip"):
+		return "Nested ZIP archives are not supported"
+	if compressed_size and file_size / compressed_size > MAX_COMPRESSION_RATIO:
+		return "ZIP entry has a suspicious compression ratio"
+	return None
+
+
+def media_type_for_name(filename: str) -> str | None:
+	extension = PurePath(filename).suffix.casefold()
+	return {extension: media_type for media_type, extension in SUPPORTED_RESUME_TYPES.items()}.get(
+		extension
+	)

@@ -3,7 +3,11 @@ from zipfile import ZipFile
 
 import pytest
 
-from app.documents.ingestion import DocumentValidationError, validate_resume
+from app.documents.ingestion import (
+	DocumentValidationError,
+	inspect_resume_zip,
+	validate_resume,
+)
 
 
 def test_accepts_digital_pdf_with_matching_name_and_media_type() -> None:
@@ -30,3 +34,19 @@ def test_rejects_macro_enabled_docx_content() -> None:
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 			"resume.docx",
 		)
+
+
+def test_reports_each_invalid_zip_entry_without_rejecting_valid_resumes() -> None:
+	content = BytesIO()
+	with ZipFile(content, "w") as archive:
+		archive.writestr("valid.txt", "Python engineer")
+		archive.writestr("unsafe/../resume.txt", "invalid")
+		archive.writestr("readme.md", "invalid")
+
+	entries = inspect_resume_zip(content.getvalue())
+
+	assert [(entry.name, entry.reason) for entry in entries] == [
+		("valid.txt", None),
+		("unsafe/../resume.txt", "ZIP entry has an unsafe path"),
+		("readme.md", "Resume must be a PDF, DOCX, or TXT file"),
+	]
