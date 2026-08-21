@@ -8,7 +8,7 @@ from secrets import token_urlsafe
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-from sqlalchemy import delete, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
@@ -203,10 +203,19 @@ async def list_jobs(organization_id: str, request: Request) -> list[dict[str, ob
 	user = await require_user(request)
 	store = require_sqlalchemy_store(request)
 	async with store.sessions()() as session:
+		latest_version = (
+			select(func.max(JobVersion.version))
+			.where(JobVersion.job_id == Job.id)
+			.correlate(Job)
+			.scalar_subquery()
+		)
 		await require_membership(session, organization_id, user.id)
 		rows = await session.execute(
 			select(Job, JobVersion)
-			.join(JobVersion, JobVersion.job_id == Job.id)
+			.join(
+				JobVersion,
+				(JobVersion.job_id == Job.id) & (JobVersion.version == latest_version),
+			)
 			.where(Job.organization_id == organization_id)
 			.order_by(Job.created_at.desc(), JobVersion.version.desc())
 		)
@@ -252,9 +261,7 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
 		if job is None:
 			raise APIError(404, "NOT_FOUND", "Job not found")
 		await require_write_membership(session, job.organization_id, user.id)
-		version = (
-			await session.execute(select(JobVersion).where(JobVersion.job_id == job.id))
-		).scalar_one()
+		version = await latest_job_version(session, job.id)
 		requirements = (
 			await session.execute(
 				select(JobRequirement).where(JobRequirement.job_version_id == version.id)
@@ -296,12 +303,19 @@ async def confirm_requirements(
 		if job is None:
 			raise APIError(404, "NOT_FOUND", "Job not found")
 		await require_write_membership(session, job.organization_id, user.id)
-		version = (
-			await session.execute(select(JobVersion).where(JobVersion.job_id == job.id))
-		).scalar_one()
-		await session.execute(
-			delete(JobRequirement).where(JobRequirement.job_version_id == version.id)
+		previous_version = await latest_job_version(session, job.id)
+		version = JobVersion(
+			id=new_id(),
+			job_id=job.id,
+			version=previous_version.version + 1,
+			source_text=previous_version.source_text,
+			normalized_text=previous_version.normalized_text,
+			source_media_type=previous_version.source_media_type,
+			draft_requirements=previous_version.draft_requirements,
+			schema_version=previous_version.schema_version,
+			confirmed_at=datetime.now(UTC),
 		)
+		session.add(version)
 		for requirement in input_data.requirements:
 			session.add(
 				JobRequirement(
@@ -310,7 +324,6 @@ async def confirm_requirements(
 					normalized_text=requirement.normalized_text, aliases=[], source_evidence=[],
 				)
 			)
-		version.confirmed_at = datetime.now(UTC)
 	return {"confirmed": True}
 
 
@@ -401,6 +414,18 @@ async def require_user(request: Request) -> UserRecord:
 	if user is None:
 		raise APIError(401, "UNAUTHORIZED", "Unauthorized")
 	return user
+
+
+async def latest_job_version(session: AsyncSession, job_id: str) -> JobVersion:
+	version = (
+		await session.execute(
+			select(JobVersion)
+			.where(JobVersion.job_id == job_id)
+			.order_by(JobVersion.version.desc())
+			.limit(1)
+		)
+	).scalar_one()
+	return version
 
 
 def require_sqlalchemy_store(request: Request) -> SQLAlchemyStore:
