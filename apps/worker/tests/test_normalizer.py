@@ -12,10 +12,22 @@ def test_normalizes_exact_skill_aliases_with_evidence() -> None:
 	assert facts == {
 		"contact": {"name": None, "email": None, "location": None},
 		"skills": [
-			{"canonicalName": "Kubernetes", "evidenceBlockIds": ["p2-b1"]},
-			{"canonicalName": "PostgreSQL", "evidenceBlockIds": ["p1-b1"]},
-			{"canonicalName": "Python", "evidenceBlockIds": ["p1-b1"]},
-		]
+			{
+				"canonicalName": "Kubernetes",
+				"category": "Application server software",
+				"evidenceBlockIds": ["p2-b1"],
+			},
+			{
+				"canonicalName": "PostgreSQL",
+				"category": "Object oriented data base management software",
+				"evidenceBlockIds": ["p1-b1"],
+			},
+			{
+				"canonicalName": "Python",
+				"category": "Object or component oriented development software",
+				"evidenceBlockIds": ["p1-b1"],
+			},
+		],
 	}
 
 

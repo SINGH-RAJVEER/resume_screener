@@ -7,7 +7,9 @@ def test_independent_report_does_not_encourage_unsupported_skill_claims() -> Non
 		"Python and Docker experience",
 	)
 
-	assert any("only when your resume already supports" in str(item["detail"]) for item in suggestions)
+	assert any(
+		"only when your resume already supports" in str(item["detail"]) for item in suggestions
+	)
 
 
 def test_independent_report_scores_documented_basics() -> None:

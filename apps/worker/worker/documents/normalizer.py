@@ -2,29 +2,41 @@
 import re
 from collections.abc import Iterable, Mapping
 
-SKILL_ALIASES: dict[str, tuple[str, ...]] = {
-	"AWS": ("aws", "amazon web services"),
-	"Docker": ("docker",),
-	"JavaScript": ("javascript", "js"),
-	"Kubernetes": ("kubernetes", "k8s"),
-	"PostgreSQL": ("postgresql", "postgres"),
-	"Python": ("python",),
-	"React": ("react", "reactjs", "react.js"),
-	"SQL": ("sql",),
-	"TypeScript": ("typescript", "ts"),
-}
+from .vocabulary import load_vocabulary
 
 
 def normalize_resume(blocks: Iterable[Mapping[str, object]]) -> dict[str, object]:
 	block_list = list(blocks)
+	vocabulary = load_vocabulary()
+	skill_hits: dict[str, list[str]] = {}
+	for block in block_list:
+		block_id = str(block["id"])
+		for canonical_name in vocabulary.mention(str(block["text"])):
+			ids = skill_hits.setdefault(canonical_name, [])
+			if block_id not in ids:
+				ids.append(block_id)
 	return {
 		"contact": contact_facts(block_list),
 		"skills": [
-			{"canonicalName": skill, "evidenceBlockIds": evidence}
-			for skill, aliases in SKILL_ALIASES.items()
-			if (evidence := matching_blocks(block_list, aliases))
-		]
+			{
+				"canonicalName": canonical_name,
+				"category": vocabulary.category_for(canonical_name),
+				"evidenceBlockIds": sorted(
+					skill_hits[canonical_name], key=block_order(block_list)
+				),
+			}
+			for canonical_name in sorted(skill_hits, key=str.casefold)
+		],
 	}
+
+
+def block_order(blocks: list[Mapping[str, object]]):
+	order = {str(block["id"]): index for index, block in enumerate(blocks)}
+
+	def key(block_id: str) -> int:
+		return order.get(block_id, len(order))
+
+	return key
 
 
 def contact_facts(blocks: Iterable[Mapping[str, object]]) -> dict[str, str | None]:
@@ -59,15 +71,3 @@ def contact_facts(blocks: Iterable[Mapping[str, object]]) -> dict[str, str | Non
 		"email": email_match.group(0) if email_match else None,
 		"location": location,
 	}
-
-
-def matching_blocks(blocks: Iterable[Mapping[str, object]], aliases: Iterable[str]) -> list[str]:
-	pattern = re.compile(
-		"|".join(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])" for alias in aliases),
-		re.IGNORECASE,
-	)
-	return [
-		str(block["id"])
-		for block in blocks
-		if pattern.search(str(block["text"]))
-	]

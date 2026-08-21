@@ -1,9 +1,10 @@
-from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import cast
 
-from ..documents.normalizer import SKILL_ALIASES
+from ..documents.vocabulary import mentioned_skills
+
+MAX_LISTED_GAPS = 8
 
 
 def independent_report(
@@ -14,12 +15,14 @@ def independent_report(
 		cast(Mapping[str, object], contact) if isinstance(contact, Mapping) else {}
 	)
 	skills = normalized_facts.get("skills")
-	recognized_skills: list[Mapping[str, object]] = [
-		cast(Mapping[str, object], item)
-		for item in cast(list[object], skills)
-		if isinstance(item, Mapping)
-	] if isinstance(skills, list) else []
-	documented_skill_names = {str(item.get("canonicalName")) for item in recognized_skills}
+	documented_skill_names: set[str] = {
+		str(item.get("canonicalName"))
+		for item in (
+			cast(Mapping[str, object], entry)
+			for entry in cast(list[object], skills)
+			if isinstance(entry, Mapping)
+		)
+	} if isinstance(skills, list) else set()
 	suggestions: list[dict[str, object]] = []
 	if not contact_facts.get("name"):
 		suggestions.append(
@@ -32,7 +35,7 @@ def independent_report(
 				"detail": "Include a professional email address.",
 			}
 		)
-	if not recognized_skills:
+	if not documented_skill_names:
 		suggestions.append(
 			{
 				"title": "Make skills easier to verify",
@@ -40,19 +43,14 @@ def independent_report(
 			}
 		)
 	if job_description:
-		missing = [
-			skill
-			for skill, aliases in SKILL_ALIASES.items()
-			if any(alias in job_description.casefold() for alias in aliases)
-			and skill not in documented_skill_names
-		]
+		missing = sorted(mentioned_skills(job_description) - documented_skill_names)
 		if missing:
 			suggestions.append(
 				{
 					"title": "Review role-specific evidence",
 					"detail": (
-						f"The job description mentions {', '.join(missing)}. Add it only "
-						"when your resume already supports the claim."
+						f"The job description mentions {', '.join(missing[:MAX_LISTED_GAPS])}. "
+						"Add them only when your resume already supports the claim."
 					),
 				}
 			)
@@ -71,6 +69,6 @@ def independent_report(
 		20
 		+ (20 if contact_facts.get("name") else 0)
 		+ (20 if contact_facts.get("email") else 0)
-		+ min(40, len(recognized_skills) * 8),
+		+ min(40, len(documented_skill_names) * 8),
 	)
 	return score, suggestions

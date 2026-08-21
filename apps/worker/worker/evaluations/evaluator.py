@@ -1,10 +1,9 @@
-from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from ..documents.normalizer import SKILL_ALIASES
+from ..documents.vocabulary import mentioned_skills
 
 
 @dataclass(frozen=True)
@@ -68,17 +67,12 @@ def evaluate(
 def assess_requirement(
 	requirement: Mapping[str, Any], skills: Mapping[str, list[str]]
 ) -> Assessment:
-	text = str(requirement["normalized_text"]).casefold()
-	required_skills = [
-		skill
-		for skill, aliases in SKILL_ALIASES.items()
-		if any(alias.casefold() in text for alias in aliases)
-	]
+	required_skills = mentioned_skills(str(requirement["normalized_text"]))
 	if not required_skills:
 		return Assessment(
 			str(requirement["id"]), "unknown", 0, "No deterministic criterion match.", []
 		)
-	matched = [(skill, skills[skill]) for skill in required_skills if skills.get(skill)]
+	matched = [(skill, skills[skill]) for skill in sorted(required_skills) if skills.get(skill)]
 	evidence = [
 		{"blockId": block_id, "quote": skill}
 		for skill, block_ids in matched
