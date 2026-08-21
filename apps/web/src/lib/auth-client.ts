@@ -13,6 +13,7 @@ interface AuthSession {
 		id: string;
 		name: string;
 		email: string;
+		accountType: "employer" | "candidate";
 		emailVerified: boolean;
 		image?: string | null;
 		createdAt: string;
@@ -171,10 +172,14 @@ export const authClient = {
 	signIn: {
 		email: (credentials: Credentials) =>
 			authenticate("/api/auth/sign-in/email", credentials),
+		employer: (credentials: Credentials) =>
+			authenticate("/api/employer/auth/sign-in/email", credentials),
 	},
 	signUp: {
 		email: (credentials: SignUpCredentials) =>
 			authenticate("/api/auth/sign-up/email", credentials),
+		employer: (credentials: SignUpCredentials) =>
+			authenticate("/api/employer/auth/sign-up/email", credentials),
 	},
 	signOut: async () => {
 		const result = await request<{ success: boolean }>(

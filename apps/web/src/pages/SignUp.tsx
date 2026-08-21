@@ -16,6 +16,7 @@ export const SignUp = () => {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const mode = searchParams.get("mode");
+	const isEmployer = mode === "employer";
 	const modeLabel =
 		mode === "employer"
 			? "an organization workspace"
@@ -29,7 +30,9 @@ export const SignUp = () => {
 		e.preventDefault();
 		setError(null);
 
-		const { error: authError } = await authClient.signUp.email({
+		const { error: authError } = await (isEmployer
+			? authClient.signUp.employer
+			: authClient.signUp.email)({
 			name,
 			email,
 			password,
@@ -119,7 +122,14 @@ export const SignUp = () => {
 								Sign Up
 							</Button>
 							<p className="auth-switch">
-								<Link className="auth-link" to="/sign-in">
+								<Link
+									className="auth-link"
+									to={
+										isEmployer
+											? "/sign-in?mode=employer"
+											: "/sign-in"
+									}
+								>
 									Sign in
 								</Link>
 							</p>
