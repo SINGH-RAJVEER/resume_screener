@@ -4,6 +4,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+from ..documents.normalizer import SKILL_ALIASES
+
 
 @dataclass(frozen=True)
 class Assessment:
@@ -67,22 +69,31 @@ def assess_requirement(
 	requirement: Mapping[str, Any], skills: Mapping[str, list[str]]
 ) -> Assessment:
 	text = str(requirement["normalized_text"]).casefold()
-	matched = [(skill, blocks) for skill, blocks in skills.items() if skill.casefold() in text]
-	if not matched:
+	required_skills = [
+		skill
+		for skill, aliases in SKILL_ALIASES.items()
+		if any(alias.casefold() in text for alias in aliases)
+	]
+	if not required_skills:
 		return Assessment(
 			str(requirement["id"]), "unknown", 0, "No deterministic criterion match.", []
 		)
+	matched = [(skill, skills[skill]) for skill in required_skills if skills.get(skill)]
 	evidence = [
 		{"blockId": block_id, "quote": skill}
 		for skill, block_ids in matched
 		for block_id in block_ids
 	]
-	if evidence:
+	if len(matched) == len(required_skills):
 		return Assessment(
-			str(requirement["id"]), "met", 1, "Explicit skill evidence found.", evidence
+			str(requirement["id"]), "met", 1, "All explicit skill evidence found.", evidence
+		)
+	if matched:
+		return Assessment(
+			str(requirement["id"]), "partial", 1, "Some explicit skill evidence found.", evidence
 		)
 	return Assessment(
-		str(requirement["id"]), "not_met", 1, "Required skill is not documented.", []
+		str(requirement["id"]), "not_met", 1, "Explicit required skill is not documented.", []
 	)
 
 
