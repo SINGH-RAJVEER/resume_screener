@@ -146,6 +146,64 @@ h1 {
 	gap: var(--space-3);
 	margin-top: var(--space-4);
 }
+.landing-paths {
+	margin-top: var(--space-4);
+	max-width: 34rem;
+}
+.path-label {
+	color: var(--muted);
+	font-family: "Courier New", monospace;
+	font-size: 0.68rem;
+	letter-spacing: 0.08em;
+	margin-bottom: 0.35rem;
+	text-transform: uppercase;
+}
+.landing-path {
+	align-items: center;
+	border-bottom: 1px solid var(--rule);
+	display: flex;
+	justify-content: space-between;
+	padding: 0.85rem 0;
+	text-decoration: none;
+}
+.landing-path:first-of-type {
+	border-top: 1px solid var(--ink);
+}
+.landing-path span {
+	display: grid;
+	gap: 0.12rem;
+}
+.landing-path b {
+	color: var(--accent);
+	font-family: "Courier New", monospace;
+	font-size: 0.65rem;
+	font-weight: 400;
+}
+.landing-path strong {
+	font-size: 0.86rem;
+	font-weight: 700;
+}
+.landing-path small {
+	color: var(--muted);
+	font-size: 0.75rem;
+}
+.landing-path i {
+	color: var(--accent);
+	font-size: 1.15rem;
+	font-style: normal;
+}
+.landing-path:hover strong {
+	color: var(--accent);
+}
+.landing-path:hover i {
+	transform: translate(0.2rem, -0.2rem);
+}
+.landing-path-note {
+	cursor: default;
+}
+.landing-path-note i {
+	display: none;
+}
 .button {
 	border: 1px solid var(--ink);
 	display: inline-flex;
@@ -167,6 +225,9 @@ h1 {
 .button-quiet {
 	border-color: transparent;
 	padding-inline: 0;
+}
+.landing-paths > .button-quiet {
+	margin-top: var(--space-2);
 }
 .button-quiet:hover {
 	color: var(--accent);

@@ -27,14 +27,47 @@ const App = () => {
 					A calmer way to compare documented experience with the
 					requirements that actually matter.
 				</p>
-				<div className="landing-actions">
-					<Link className="button button-primary" to="/sign-up">
-						Start screening
+				<section className="landing-paths" aria-labelledby="path-label">
+					<p className="path-label" id="path-label">
+						What brings you here?
+					</p>
+					<Link
+						className="landing-path"
+						to="/sign-up?mode=independent"
+					>
+						<span>
+							<b>01</b>
+							<strong>Check my resume</strong>
+							<small>
+								Compare your experience with a job description.
+							</small>
+						</span>
+						<i aria-hidden="true">↗</i>
 					</Link>
+					<Link className="landing-path" to="/sign-up?mode=employer">
+						<span>
+							<b>02</b>
+							<strong>Screen for an organization</strong>
+							<small>
+								Create jobs and review candidate submissions.
+							</small>
+						</span>
+						<i aria-hidden="true">↗</i>
+					</Link>
+					<div className="landing-path landing-path-note">
+						<span>
+							<b>03</b>
+							<strong>Submit through an invitation</strong>
+							<small>
+								Open the job-scoped link you received to upload.
+							</small>
+						</span>
+					</div>
 					<Link className="button button-quiet" to="/sign-in">
-						Sign in <span aria-hidden="true">→</span>
+						Already have an account? Sign in{" "}
+						<span aria-hidden="true">→</span>
 					</Link>
-				</div>
+				</section>
 				<div className="landing-note">
 					<span className="status-dot" /> One free independent
 					evaluation every week

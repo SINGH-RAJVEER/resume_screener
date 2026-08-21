@@ -9,11 +9,17 @@ import {
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
 
 export const SignUp = () => {
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
+	const mode = searchParams.get("mode");
+	const modeLabel =
+		mode === "employer"
+			? "an organization workspace"
+			: "your private evaluation";
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
@@ -61,7 +67,7 @@ export const SignUp = () => {
 					<form onSubmit={handleSubmit}>
 						<CardHeader>
 							<CardTitle asChild className="auth-title">
-								<h1>Sign Up</h1>
+								<h1>Create {modeLabel}</h1>
 							</CardTitle>
 						</CardHeader>
 						<CardContent className="auth-fields">
