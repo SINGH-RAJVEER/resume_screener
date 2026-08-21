@@ -35,6 +35,8 @@ export interface JobDetail {
 export interface Evaluation {
 	id: string;
 	candidateName: string | null;
+	candidateEmail: string | null;
+	candidateLocation: string | null;
 	status: string;
 	score: number | null;
 	coverage: number | null;

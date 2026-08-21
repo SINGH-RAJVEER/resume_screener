@@ -111,6 +111,7 @@ class CandidateRecord(Base):
     full_name: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -392,6 +393,50 @@ class Invitation(Base):
         ForeignKey("resume_submission.id", ondelete="SET NULL")
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class IndependentEvaluation(Base):
+    __tablename__ = "independent_evaluation"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'complete', 'failed')",
+            name="ck_independent_evaluation_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    original_name: Mapped[str] = mapped_column(Text, nullable=False)
+    media_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    score: Mapped[int | None] = mapped_column(Integer)
+    suggestions: Mapped[list[dict[str, str]] | None] = mapped_column(JSONB)
+    improved_resume_key: Mapped[str | None] = mapped_column(Text)
+    improved_resume_unlocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    normalized_facts: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    safe_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PointLedgerEntry(Base):
+    __tablename__ = "point_ledger_entry"
+    __table_args__ = (
+        CheckConstraint("amount <> 0", name="ck_point_ledger_entry_nonzero_amount"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_point_ledger_entry_idempotency"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

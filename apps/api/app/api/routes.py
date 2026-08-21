@@ -857,6 +857,8 @@ async def list_evaluations(
                 {
                     "id": evaluation.id,
                     "candidateName": candidate.full_name,
+                    "candidateEmail": candidate.email,
+                    "candidateLocation": candidate.location,
                     "status": evaluation.status,
                     "score": evaluation.score,
                     "coverage": evaluation.evidence_coverage,

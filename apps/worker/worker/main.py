@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -150,6 +151,28 @@ class Worker:
 					"version_id": job.payload_reference,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
+				},
+			)
+			contact = normalized_facts["contact"]
+			if not isinstance(contact, Mapping):
+				raise NonRetryableJobError("Resume contact facts are invalid")
+			await connection.execute(
+				text(
+					"""
+					UPDATE candidate_record AS candidate
+					SET full_name = COALESCE(candidate.full_name, :name),
+						email = COALESCE(candidate.email, :email),
+						location = COALESCE(candidate.location, :location), updated_at = now()
+					FROM resume_submission AS submission
+					WHERE submission.candidate_record_id = candidate.id
+						AND submission.resume_version_id = :version_id
+					"""
+				),
+				{
+					"name": contact["name"],
+					"email": contact["email"],
+					"location": contact["location"],
+					"version_id": job.payload_reference,
 				},
 			)
 			result = await connection.execute(
