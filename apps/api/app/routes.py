@@ -16,6 +16,7 @@ from .http import APIError
 from .ingestion import DocumentValidationError, validate_resume
 from .models import (
 	CandidateRecord,
+	Evaluation,
 	Job,
 	JobRequirement,
 	JobVersion,
@@ -343,6 +344,9 @@ async def upload_resume(
 		if job is None:
 			raise APIError(404, "NOT_FOUND", "Job not found")
 		await require_write_membership(session, job.organization_id, user.id)
+		job_version = await latest_job_version(session, job.id)
+		if job_version.confirmed_at is None:
+			raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
 		candidate = CandidateRecord(
 			id=new_id(), organization_id=job.organization_id, full_name=candidate_name or None
 		)
@@ -377,11 +381,21 @@ async def upload_resume(
 			payload_reference=version.id,
 			idempotency_key=new_id(),
 		)
-		session.add_all([candidate, document, version, submission, processing])
+		evaluation = Evaluation(
+			id=new_id(),
+			resume_submission_id=submission.id,
+			job_version_id=job_version.id,
+			resume_version_id=version.id,
+		)
+		session.add_all([candidate, document, version, submission, processing, evaluation])
 		LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
 			document.storage_key, content
 		)
-	return {"processingJobId": processing.id, "submissionId": submission.id}
+	return {
+		"processingJobId": processing.id,
+		"submissionId": submission.id,
+		"evaluationId": evaluation.id,
+	}
 
 
 @router.get("/api/processing-jobs/{processing_job_id}")

@@ -100,6 +100,9 @@ class Worker:
 			)
 
 	async def _dispatch(self, job: ClaimedJob) -> None:
+		if job.type == "evaluation_processing":
+			await self._prepare_evaluation(job)
+			return
 		if job.type != "resume_processing":
 			raise NonRetryableJobError("Unsupported processing job type")
 		async with self._engine.connect() as connection:
@@ -148,6 +151,26 @@ class Worker:
 					"lease_token": job.lease_token,
 				},
 			)
+			result = await connection.execute(
+				text("SELECT id FROM evaluation WHERE resume_version_id = :resume_version_id"),
+				{"resume_version_id": job.payload_reference},
+			)
+			for evaluation_id in result.scalars():
+				await connection.execute(
+					text(
+						"""
+						INSERT INTO processing_job (
+							id, type, status, payload_reference, idempotency_key,
+							attempt_count, maximum_attempts, available_at, created_at, updated_at
+						) VALUES (
+							:id, 'evaluation_processing', 'ready', :evaluation_id, :evaluation_id,
+							0, 3, now(), now(), now()
+						)
+						ON CONFLICT (type, idempotency_key) DO NOTHING
+						"""
+					),
+					{"id": secrets.token_urlsafe(18), "evaluation_id": evaluation_id},
+				)
 
 	def _read_object(self, key: str) -> bytes:
 		root = self._settings.storage_root.resolve()
@@ -155,6 +178,28 @@ class Worker:
 		if root not in path.parents or not path.is_file():
 			raise NonRetryableJobError("Resume source document is unavailable")
 		return path.read_bytes()
+
+	async def _prepare_evaluation(self, job: ClaimedJob) -> None:
+		async with self._engine.begin() as connection:
+			await connection.execute(
+				text(
+					"""
+					UPDATE evaluation
+					SET status = 'ready_for_review', quality_state = 'ready', completed_at = now()
+					WHERE id = :evaluation_id
+						AND EXISTS (
+							SELECT 1 FROM processing_job
+							WHERE id = :job_id AND lease_token = :lease_token
+								AND lease_expires_at > now()
+						)
+					"""
+				),
+				{
+					"evaluation_id": job.payload_reference,
+					"job_id": job.id,
+					"lease_token": job.lease_token,
+				},
+			)
 
 	async def _complete(self, job: ClaimedJob) -> None:
 		await self._update_job(job, "completed", None, None)
