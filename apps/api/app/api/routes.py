@@ -30,6 +30,7 @@ from ..persistence.models import (
     ResumeDocument,
     ResumeSubmission,
     ResumeVersion,
+    User,
 )
 from ..persistence.store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
 
@@ -77,6 +78,11 @@ class SessionResponse(ResponseModel):
 
 class OrganizationRequest(RequestModel):
     name: str
+
+
+class OrganizationMemberRequest(RequestModel):
+    email: str
+    role: str
 
 
 class JobRequest(RequestModel):
@@ -229,6 +235,89 @@ async def create_organization(input_data: OrganizationRequest, request: Request)
     async with store.sessions().begin() as session:
         session.add_all([organization, member])
     return {"id": organization.id, "name": organization.name, "role": "owner"}
+
+
+@router.get("/api/organizations/{organization_id}/members")
+async def list_organization_members(organization_id: str, request: Request) -> list[dict[str, str]]:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        await require_membership(session, organization_id, user.id)
+        rows = await session.execute(
+            select(OrganizationMember, User)
+            .join(User, User.id == OrganizationMember.user_id)
+            .where(OrganizationMember.organization_id == organization_id)
+            .order_by(User.name, User.email)
+        )
+    return [
+        {
+            "userId": member.user_id,
+            "name": member_user.name,
+            "email": member_user.email,
+            "role": member.role,
+        }
+        for member, member_user in rows
+    ]
+
+
+@router.post("/api/organizations/{organization_id}/members", status_code=201)
+async def add_organization_member(
+    organization_id: str, input_data: OrganizationMemberRequest, request: Request
+) -> dict[str, str]:
+    if input_data.role not in {"recruiter", "viewer"}:
+        raise APIError(400, "INVALID_REQUEST", "Member role must be recruiter or viewer")
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        member_user = (
+            await session.execute(
+                select(User).where(User.email == input_data.email.strip().lower())
+            )
+        ).scalar_one_or_none()
+        if member_user is None or member_user.account_type != "employer":
+            raise APIError(404, "NOT_FOUND", "Employer user not found")
+        existing = (
+            await session.execute(
+                select(OrganizationMember).where(
+                    OrganizationMember.organization_id == organization_id,
+                    OrganizationMember.user_id == member_user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise APIError(409, "MEMBER_EXISTS", "User is already a member")
+        member = OrganizationMember(
+            id=new_id(),
+            organization_id=organization_id,
+            user_id=member_user.id,
+            role=input_data.role,
+        )
+        session.add(member)
+    return {"userId": member_user.id, "role": member.role}
+
+
+@router.delete("/api/organizations/{organization_id}/members/{member_user_id}", status_code=204)
+async def remove_organization_member(
+    organization_id: str, member_user_id: str, request: Request
+) -> None:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        member = (
+            await session.execute(
+                select(OrganizationMember).where(
+                    OrganizationMember.organization_id == organization_id,
+                    OrganizationMember.user_id == member_user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if member is None:
+            raise APIError(404, "NOT_FOUND", "Organization member not found")
+        if member.role == "owner":
+            raise APIError(409, "OWNER_REQUIRED", "Organization owner cannot be removed")
+        await session.delete(member)
 
 
 @router.get("/api/organizations/{organization_id}/jobs")
@@ -634,6 +723,17 @@ async def require_write_membership(
         )
     )
     if result.scalar_one_or_none() not in {"owner", "recruiter"}:
+        raise APIError(404, "NOT_FOUND", "Organization not found")
+
+
+async def require_owner(session: AsyncSession, organization_id: str, user_id: str) -> None:
+    result = await session.execute(
+        select(OrganizationMember.role).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() != "owner":
         raise APIError(404, "NOT_FOUND", "Organization not found")
 
 
