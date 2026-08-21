@@ -168,6 +168,20 @@ textarea {
 	margin-top: 2rem;
 }
 
+.evaluation-list {
+	display: grid;
+	gap: 0.5rem;
+	margin-top: 2rem;
+}
+
+.evaluation-list div {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.75rem 0;
+	border-bottom: 1px solid var(--border);
+}
+
 @media (max-width: 900px) {
 	.workspace-grid {
 		grid-template-columns: 1fr;

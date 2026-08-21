@@ -23,6 +23,7 @@ from .models import (
 	Organization,
 	OrganizationMember,
 	ProcessingJob,
+	RequirementAssessment,
 	ResumeDocument,
 	ResumeSubmission,
 	ResumeVersion,
@@ -421,6 +422,52 @@ async def processing_job_status(processing_job_id: str, request: Request) -> dic
 			"status": processing.status,
 			"safeError": processing.safe_error,
 		}
+
+
+@router.get("/api/jobs/{job_id}/evaluations")
+async def list_evaluations(job_id: str, request: Request) -> list[dict[str, object]]:
+	user = await require_user(request)
+	store = require_sqlalchemy_store(request)
+	async with store.sessions()() as session:
+		job = await session.get(Job, job_id)
+		if job is None:
+			raise APIError(404, "NOT_FOUND", "Job not found")
+		await require_membership(session, job.organization_id, user.id)
+		rows = await session.execute(
+			select(Evaluation, CandidateRecord)
+			.join(ResumeSubmission, ResumeSubmission.id == Evaluation.resume_submission_id)
+			.join(CandidateRecord, CandidateRecord.id == ResumeSubmission.candidate_record_id)
+			.where(ResumeSubmission.job_id == job.id)
+			.order_by(Evaluation.score.desc().nullslast(), Evaluation.created_at.desc())
+		)
+		result: list[dict[str, object]] = []
+		for evaluation, candidate in rows:
+			assessments = (
+				await session.execute(
+					select(RequirementAssessment).where(
+						RequirementAssessment.evaluation_id == evaluation.id
+					)
+				)
+			).scalars()
+			result.append(
+				{
+					"id": evaluation.id,
+					"candidateName": candidate.full_name,
+					"status": evaluation.status,
+					"score": evaluation.score,
+					"coverage": evaluation.evidence_coverage,
+					"eligibility": evaluation.eligibility,
+					"assessments": [
+						{
+							"outcome": assessment.outcome,
+							"reasoning": assessment.reasoning,
+							"evidence": assessment.evidence,
+						}
+						for assessment in assessments
+					],
+				}
+			)
+		return result
 
 
 async def require_user(request: Request) -> UserRecord:

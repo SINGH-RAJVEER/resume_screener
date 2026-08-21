@@ -32,6 +32,20 @@ export interface JobDetail {
 	draftRequirements: Array<{ stableId: string; normalizedText: string }>;
 }
 
+export interface Evaluation {
+	id: string;
+	candidateName: string | null;
+	status: string;
+	score: number | null;
+	coverage: number | null;
+	eligibility: string;
+	assessments: Array<{
+		outcome: string;
+		reasoning: string;
+		evidence: Array<{ blockId: string; quote: string }>;
+	}>;
+}
+
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 	const response = await fetch(`${baseURL}${path}`, {
 		...init,
@@ -58,6 +72,8 @@ export const workspaceClient = {
 	jobs: (organizationId: string) =>
 		request<Job[]>(`/api/organizations/${organizationId}/jobs`),
 	job: (jobId: string) => request<JobDetail>(`/api/jobs/${jobId}`),
+	evaluations: (jobId: string) =>
+		request<Evaluation[]>(`/api/jobs/${jobId}/evaluations`),
 	createJob: (organizationId: string, title: string, description: string) =>
 		request<{ id: string }>("/api/jobs", {
 			method: "POST",

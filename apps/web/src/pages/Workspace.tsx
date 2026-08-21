@@ -4,6 +4,7 @@ import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useEffect, useState } from "react";
 import { authClient } from "../lib/auth-client";
 import {
+	type Evaluation,
 	type Job,
 	type JobDetail,
 	type Organization,
@@ -24,6 +25,7 @@ export const Workspace = () => {
 	const [organizationId, setOrganizationId] = useState("");
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
+	const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
 	const [organizationName, setOrganizationName] = useState("");
 	const [jobTitle, setJobTitle] = useState("");
 	const [description, setDescription] = useState("");
@@ -148,6 +150,7 @@ export const Workspace = () => {
 		try {
 			const detail = await workspaceClient.job(job.id);
 			setSelectedJob(detail);
+			setEvaluations(await workspaceClient.evaluations(job.id));
 			setRequirements(
 				detail.requirements.length
 					? detail.requirements.map((requirement) => ({
@@ -389,6 +392,23 @@ export const Workspace = () => {
 									/>
 									<Button type="submit">Queue resume</Button>
 								</form>
+							)}
+							{evaluations.length > 0 && (
+								<div className="evaluation-list">
+									<h3>Results</h3>
+									{evaluations.map((evaluation) => (
+										<div key={evaluation.id}>
+											<strong>
+												{evaluation.candidateName ??
+													"Candidate"}
+											</strong>
+											<span>
+												{evaluation.score ?? "Pending"}{" "}
+												· {evaluation.eligibility}
+											</span>
+										</div>
+									))}
+								</div>
 							)}
 						</>
 					) : (
