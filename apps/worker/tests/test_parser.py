@@ -3,7 +3,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from worker.parser import DocumentParseError, extract_blocks
+from worker.documents.parser import DocumentParseError, extract_blocks
 
 
 def test_extracts_utf8_text_into_an_evidence_block() -> None:

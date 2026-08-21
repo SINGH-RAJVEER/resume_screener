@@ -1,4 +1,4 @@
-from worker.normalizer import normalize_resume
+from worker.documents.normalizer import normalize_resume
 
 
 def test_normalizes_exact_skill_aliases_with_evidence() -> None:

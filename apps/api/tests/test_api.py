@@ -9,9 +9,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.auth import AuthService
-from app.config import Settings
+from app.core.config import Settings
 from app.main import create_app
-from app.store import EmailAlreadyUsedError, NotFoundError, Store, UserRecord
+from app.persistence.store import EmailAlreadyUsedError, NotFoundError, Store, UserRecord
 
 SECRET = "test-secret-that-is-at-least-32-characters"
 SETTINGS = Settings(

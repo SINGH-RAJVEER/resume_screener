@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
+import { Workspace } from "./features/workspace/Workspace";
 import { authClient } from "./lib/auth-client";
-import { Workspace } from "./pages/Workspace";
 
 const App = () => {
 	const { data: session, isPending } = authClient.useSession();

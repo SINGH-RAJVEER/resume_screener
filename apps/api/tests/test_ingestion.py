@@ -3,7 +3,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from app.ingestion import DocumentValidationError, validate_resume
+from app.documents.ingestion import DocumentValidationError, validate_resume
 
 
 def test_accepts_digital_pdf_with_matching_name_and_media_type() -> None:

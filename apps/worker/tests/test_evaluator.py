@@ -1,4 +1,4 @@
-from worker.evaluator import evaluate
+from worker.evaluations.evaluator import evaluate
 
 
 def test_scores_explicit_skill_evidence_and_hard_gates() -> None:

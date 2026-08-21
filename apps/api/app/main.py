@@ -10,16 +10,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .config import Settings, load_settings
-from .http import (
+from .api.routes import router
+from .core.config import Settings, load_settings
+from .core.http import (
     APIError,
     BodySizeLimitMiddleware,
     OriginGuardMiddleware,
     RequestLoggingMiddleware,
     error_body,
 )
-from .routes import router
-from .store import SQLAlchemyStore, Store, create_engine_for_url
+from .persistence.store import SQLAlchemyStore, Store, create_engine_for_url
 
 logger = logging.getLogger("resume-screener.api")
 

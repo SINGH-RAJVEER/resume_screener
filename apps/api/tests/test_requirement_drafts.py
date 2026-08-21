@@ -1,4 +1,4 @@
-from app.requirement_drafts import draft_requirements
+from app.jobs.requirement_drafts import draft_requirements
 
 
 def test_drafts_unique_bullet_lines_with_stable_ids() -> None:

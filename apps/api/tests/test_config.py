@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.config import load_database_url
+from app.core.config import load_database_url
 
 
 def test_database_url_can_be_provided_directly(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,6 @@
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Table, UniqueConstraint
 
-from app.models import Base
+from app.persistence.models import Base
 
 
 def test_core_domain_tables_are_registered() -> None:

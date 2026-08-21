@@ -8,9 +8,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from app.config import load_database_url
-from app.models import Base
-from app.store import database_url_for_asyncpg
+from app.core.config import load_database_url
+from app.persistence.models import Base
+from app.persistence.store import database_url_for_asyncpg
 
 config = context.config
 if config.config_file_name is not None:

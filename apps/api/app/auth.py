@@ -9,7 +9,7 @@ from email.utils import parseaddr
 import bcrypt
 import jwt
 
-from .store import NotFoundError, Store, UserRecord
+from .persistence.store import NotFoundError, Store, UserRecord
 
 JWT_ISSUER = "resume-screener-api"
 

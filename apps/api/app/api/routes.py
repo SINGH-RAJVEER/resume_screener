@@ -11,10 +11,12 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
-from .http import APIError
-from .ingestion import DocumentValidationError, validate_resume
-from .models import (
+from ..auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
+from ..core.http import APIError
+from ..documents.ingestion import DocumentValidationError, validate_resume
+from ..documents.storage import LocalObjectStorage
+from ..jobs.requirement_drafts import draft_requirements
+from ..persistence.models import (
 	CandidateRecord,
 	Evaluation,
 	Job,
@@ -28,9 +30,7 @@ from .models import (
 	ResumeSubmission,
 	ResumeVersion,
 )
-from .requirement_drafts import draft_requirements
-from .storage import LocalObjectStorage
-from .store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
+from ..persistence.store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
 
 
 class RequestModel(BaseModel):

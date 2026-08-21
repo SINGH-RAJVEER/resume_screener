@@ -2,7 +2,7 @@ import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { type FormEvent, useEffect, useState } from "react";
-import { authClient } from "../lib/auth-client";
+import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
 	type Job,
@@ -10,7 +10,7 @@ import {
 	type Organization,
 	type Requirement,
 	workspaceClient,
-} from "../lib/workspace-client";
+} from "./client";
 
 const draftsToRequirements = (job: JobDetail): Requirement[] =>
 	job.draftRequirements.map((requirement) => ({

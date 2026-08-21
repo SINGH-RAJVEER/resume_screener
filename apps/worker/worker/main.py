@@ -12,9 +12,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
-from .evaluator import evaluate
-from .normalizer import normalize_resume
-from .parser import DocumentParseError, extract_blocks
+from .documents.normalizer import normalize_resume
+from .documents.parser import DocumentParseError, extract_blocks
+from .evaluations.evaluator import evaluate
 
 logger = logging.getLogger("resume-screener.worker")
 
