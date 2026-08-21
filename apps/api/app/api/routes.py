@@ -28,6 +28,7 @@ from ..jobs.requirement_drafts import draft_requirements
 from ..persistence.models import (
     CandidateRecord,
     Evaluation,
+    IndependentEvaluation,
     Invitation,
     Job,
     JobRequirement,
@@ -792,6 +793,83 @@ async def upload_resume_batch(
     return {"accepted": accepted, "rejected": rejected}
 
 
+@router.post("/api/independent-evaluations", status_code=202)
+async def create_independent_evaluation(
+    request: Request,
+    file: UploadFile = File(),
+    job_description: str = Form(""),
+) -> dict[str, str]:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    content = await file.read()
+    try:
+        validated = validate_resume(content, file.content_type, file.filename)
+    except DocumentValidationError as error:
+        raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
+    job_text = job_description.strip()
+    if len(job_text) > 100_000:
+        raise APIError(400, "INVALID_REQUEST", "Job description must be at most 100,000 characters")
+    evaluation = IndependentEvaluation(
+        id=new_id(),
+        user_id=user.id,
+        storage_key=f"independent-resumes/{new_id()}{validated.extension}",
+        original_name=file.filename or "resume",
+        media_type=validated.media_type,
+        job_description=job_text or None,
+    )
+    processing = ProcessingJob(
+        id=new_id(),
+        type="independent_evaluation_processing",
+        payload_reference=evaluation.id,
+        idempotency_key=new_id(),
+    )
+    async with store.sessions().begin() as session:
+        session.add_all([evaluation, processing])
+        LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
+            evaluation.storage_key, content
+        )
+    return {"id": evaluation.id, "processingJobId": processing.id}
+
+
+@router.get("/api/independent-evaluations")
+async def list_independent_evaluations(request: Request) -> list[dict[str, object]]:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        rows = await session.execute(
+            select(IndependentEvaluation)
+            .where(IndependentEvaluation.user_id == user.id)
+            .order_by(IndependentEvaluation.created_at.desc())
+        )
+    return [independent_evaluation_summary(evaluation) for evaluation in rows.scalars()]
+
+
+@router.get("/api/independent-evaluations/{evaluation_id}")
+async def independent_evaluation_detail(
+    evaluation_id: str, request: Request
+) -> dict[str, object]:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+        return {
+            **independent_evaluation_summary(evaluation),
+            "jobDescriptionProvided": evaluation.job_description is not None,
+            "suggestions": evaluation.suggestions or [],
+            "facts": evaluation.normalized_facts or {},
+        }
+
+
+@router.delete("/api/independent-evaluations/{evaluation_id}", status_code=204)
+async def delete_independent_evaluation(evaluation_id: str, request: Request) -> None:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+        LocalObjectStorage(Path(request.app.state.settings.storage_root)).delete(evaluation.storage_key)
+        await session.delete(evaluation)
+
+
 @router.get("/api/processing-jobs/{processing_job_id}")
 async def processing_job_status(processing_job_id: str, request: Request) -> dict[str, object]:
     user = await require_user(request)
@@ -800,6 +878,21 @@ async def processing_job_status(processing_job_id: str, request: Request) -> dic
         processing = await session.get(ProcessingJob, processing_job_id)
         if processing is None:
             raise APIError(404, "NOT_FOUND", "Processing job not found")
+        independent_evaluation = (
+            await session.execute(
+                select(IndependentEvaluation).where(
+                    IndependentEvaluation.id == processing.payload_reference
+                )
+            )
+        ).scalar_one_or_none()
+        if independent_evaluation is not None:
+            if independent_evaluation.user_id != user.id:
+                raise APIError(404, "NOT_FOUND", "Processing job not found")
+            return {
+                "id": processing.id,
+                "status": processing.status,
+                "safeError": processing.safe_error,
+            }
         submission = (
             await session.execute(
                 select(ResumeSubmission).where(
@@ -938,6 +1031,27 @@ def application_is_open(job: Job) -> bool:
         and job.application_closes_at is not None
         and job.application_opens_at <= now < job.application_closes_at
     )
+
+
+def independent_evaluation_summary(evaluation: IndependentEvaluation) -> dict[str, object]:
+    return {
+        "id": evaluation.id,
+        "originalName": evaluation.original_name,
+        "status": evaluation.status,
+        "score": evaluation.score,
+        "safeError": evaluation.safe_error,
+        "createdAt": evaluation.created_at.isoformat(),
+        "completedAt": evaluation.completed_at.isoformat() if evaluation.completed_at else None,
+    }
+
+
+async def owned_independent_evaluation(
+    session: AsyncSession, evaluation_id: str, user_id: str
+) -> IndependentEvaluation:
+    evaluation = await session.get(IndependentEvaluation, evaluation_id)
+    if evaluation is None or evaluation.user_id != user_id:
+        raise APIError(404, "NOT_FOUND", "Evaluation not found")
+    return evaluation
 
 
 async def latest_job_version(session: AsyncSession, job_id: str) -> JobVersion:

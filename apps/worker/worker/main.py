@@ -16,6 +16,7 @@ from .config import WorkerSettings, load_settings
 from .documents.normalizer import normalize_resume
 from .documents.parser import DocumentParseError, extract_blocks
 from .evaluations.evaluator import evaluate
+from .evaluations.independent import independent_report
 
 logger = logging.getLogger("resume-screener.worker")
 
@@ -102,6 +103,9 @@ class Worker:
 			)
 
 	async def _dispatch(self, job: ClaimedJob) -> None:
+		if job.type == "independent_evaluation_processing":
+			await self._process_independent_evaluation(job)
+			return
 		if job.type == "evaluation_processing":
 			await self._prepare_evaluation(job)
 			return
@@ -195,6 +199,59 @@ class Worker:
 					),
 					{"id": secrets.token_urlsafe(18), "evaluation_id": evaluation_id},
 				)
+
+	async def _process_independent_evaluation(self, job: ClaimedJob) -> None:
+		async with self._engine.begin() as connection:
+			result = await connection.execute(
+				text(
+					"""
+					UPDATE independent_evaluation
+					SET status = 'processing', safe_error = NULL
+					WHERE id = :evaluation_id
+					RETURNING storage_key, media_type, job_description
+					"""
+				),
+				{"evaluation_id": job.payload_reference},
+			)
+			evaluation = result.mappings().one_or_none()
+		if evaluation is None:
+			raise NonRetryableJobError("Independent evaluation not found")
+		content = self._read_object(str(evaluation["storage_key"]))
+		try:
+			blocks = extract_blocks(content, str(evaluation["media_type"]))
+		except DocumentParseError as error:
+			raise NonRetryableJobError(str(error)) from error
+		normalized_facts = normalize_resume(blocks["blocks"])
+		score, suggestions = independent_report(
+			normalized_facts,
+			str(evaluation["job_description"]) if evaluation["job_description"] else None,
+		)
+		async with self._engine.begin() as connection:
+			await connection.execute(
+				text(
+					"""
+					UPDATE independent_evaluation
+					SET status = 'complete', score = :score,
+						suggestions = CAST(:suggestions AS jsonb),
+						normalized_facts = CAST(:normalized_facts AS jsonb),
+						safe_error = NULL, completed_at = now()
+					WHERE id = :evaluation_id
+						AND EXISTS (
+							SELECT 1 FROM processing_job
+							WHERE id = :job_id AND lease_token = :lease_token
+								AND lease_expires_at > now()
+						)
+					"""
+				),
+				{
+					"evaluation_id": job.payload_reference,
+					"job_id": job.id,
+					"lease_token": job.lease_token,
+					"score": score,
+					"suggestions": json.dumps(suggestions),
+					"normalized_facts": json.dumps(normalized_facts),
+				},
+			)
 
 	def _read_object(self, key: str) -> bytes:
 		root = self._settings.storage_root.resolve()
@@ -295,6 +352,18 @@ class Worker:
 			await self._update_job(job, "ready", error, available_at)
 			return
 		await self._update_job(job, "dead", error, None)
+		if job.type == "independent_evaluation_processing":
+			async with self._engine.begin() as connection:
+				await connection.execute(
+					text(
+						"""
+						UPDATE independent_evaluation
+						SET status = 'failed', safe_error = :safe_error
+						WHERE id = :evaluation_id
+						"""
+					),
+					{"evaluation_id": job.payload_reference, "safe_error": error},
+				)
 
 	async def _update_job(
 		self, job: ClaimedJob, status: str, safe_error: str | None, available_at: datetime | None

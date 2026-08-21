@@ -17,6 +17,21 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const candidateClient = {
+	createIndependentEvaluation: (file: File, jobDescription: string) => {
+		const body = new FormData();
+		body.append("file", file);
+		body.append("job_description", jobDescription);
+		return request<{ id: string; processingJobId: string }>(
+			"/api/independent-evaluations",
+			{ method: "POST", body },
+		);
+	},
+	independentEvaluation: (evaluationId: string) =>
+		request<IndependentEvaluation>(
+			`/api/independent-evaluations/${evaluationId}`,
+		),
+	independentEvaluations: () =>
+		request<IndependentEvaluation[]>("/api/independent-evaluations"),
 	redeemInvitation: (token: string) =>
 		request<{ jobId: string; invitationId: string }>(
 			`/api/invitations/${token}/redeem`,
@@ -45,4 +60,19 @@ export const candidateClient = {
 			{ method: "POST", body },
 		);
 	},
+};
+
+export type IndependentEvaluation = {
+	id: string;
+	originalName: string;
+	status: "queued" | "processing" | "complete" | "failed";
+	score: number | null;
+	safeError: string | null;
+	createdAt: string;
+	completedAt: string | null;
+	jobDescriptionProvided?: boolean;
+	suggestions?: Array<{ title: string; detail: string }>;
+	facts?: {
+		skills?: Array<{ canonicalName: string }>;
+	};
 };
