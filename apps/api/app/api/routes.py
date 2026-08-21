@@ -19,6 +19,7 @@ from ..jobs.requirement_drafts import draft_requirements
 from ..persistence.models import (
 	CandidateRecord,
 	Evaluation,
+	Invitation,
 	Job,
 	JobRequirement,
 	JobVersion,
@@ -92,6 +93,10 @@ class RequirementRequest(RequestModel):
 
 class RequirementConfirmationRequest(RequestModel):
 	requirements: list[RequirementRequest]
+
+
+class InvitationRequest(RequestModel):
+	expires_in_hours: int = 168
 
 
 router = APIRouter()
@@ -327,6 +332,58 @@ async def confirm_requirements(
 				)
 			)
 	return {"confirmed": True}
+
+
+@router.post("/api/jobs/{job_id}/invitations", status_code=201)
+async def create_invitation(
+	job_id: str, input_data: InvitationRequest, request: Request
+) -> dict[str, str]:
+	if not 1 <= input_data.expires_in_hours <= 24 * 30:
+		raise APIError(
+			400, "INVALID_REQUEST", "Invitation expiry must be between 1 hour and 30 days"
+		)
+	user = await require_user(request)
+	store = require_sqlalchemy_store(request)
+	token = token_urlsafe(32)
+	async with store.sessions().begin() as session:
+		job = await session.get(Job, job_id)
+		if job is None:
+			raise APIError(404, "NOT_FOUND", "Job not found")
+		await require_write_membership(session, job.organization_id, user.id)
+		invitation = Invitation(
+			id=new_id(),
+			job_id=job.id,
+			creator_user_id=user.id,
+			token_hash=sha256(token.encode()).hexdigest(),
+			expires_at=datetime.now(UTC) + timedelta(hours=input_data.expires_in_hours),
+		)
+		session.add(invitation)
+	return {"id": invitation.id, "token": token, "expiresAt": invitation.expires_at.isoformat()}
+
+
+@router.post("/api/invitations/{token}/redeem")
+async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
+	user = await require_user(request)
+	store = require_sqlalchemy_store(request)
+	async with store.sessions().begin() as session:
+		invitation = (
+			await session.execute(
+				select(Invitation).where(
+					Invitation.token_hash == sha256(token.encode()).hexdigest()
+				)
+			)
+		).scalar_one_or_none()
+		if (
+			invitation is None
+			or invitation.revoked_at is not None
+			or invitation.expires_at <= datetime.now(UTC)
+			or invitation.resume_submission_id is not None
+		):
+			raise APIError(404, "NOT_FOUND", "Invitation is unavailable")
+		if invitation.redeeming_user_id not in {None, user.id}:
+			raise APIError(409, "INVITATION_REDEEMED", "Invitation was redeemed by another user")
+		invitation.redeeming_user_id = user.id
+		return {"jobId": invitation.job_id, "invitationId": invitation.id}
 
 
 @router.post("/api/jobs/{job_id}/resumes", status_code=202)

@@ -209,19 +209,29 @@ export const Workspace = () => {
 	return (
 		<main className="workspace-shell">
 			<header className="workspace-header">
-				<div>
-					<p className="eyebrow">Resume screener</p>
-					<h1>Employer workspace</h1>
-				</div>
-				<Button variant="outline" onClick={() => authClient.signOut()}>
-					Sign out
-				</Button>
+				<div className="brand-mark"><span>rs</span><span className="brand-name">resume screener</span></div>
+				<nav className="workspace-nav" aria-label="Workspace navigation">
+					<a className="active" href="#overview">Overview</a>
+					<a href="#jobs">Jobs</a>
+					<a href="#activity">Activity</a>
+				</nav>
+				<div className="user-menu"><span className="user-avatar">{session.user.name?.slice(0, 1).toUpperCase()}</span><span>{session.user.name}</span><Button variant="outline" onClick={() => authClient.signOut()}>Sign out</Button></div>
 			</header>
 			{error && <p className="form-error">{error}</p>}
 			{notice && <p className="workspace-notice">{notice}</p>}
+			<section className="workspace-intro" id="overview">
+				<div><p className="eyebrow">Friday, 21 August 2026</p><h1>Good work starts with clear criteria.</h1><p className="intro-copy">Create a job, confirm what matters, and review the evidence behind every evaluation.</p></div>
+				<div className="usage-meter"><div><span>Evaluation points</span><strong>240 <small>available</small></strong></div><div className="meter"><span /></div><p>60 points used this month</p></div>
+			</section>
+			<section className="metric-strip" aria-label="Workspace summary">
+				<div><span>Active jobs</span><strong>{jobs.length}</strong><small>in your workspace</small></div>
+				<div><span>Evaluations</span><strong>{evaluations.length}</strong><small>for selected job</small></div>
+				<div><span>Top match</span><strong>{evaluations.find((evaluation) => evaluation.score !== null)?.score ?? "—"}<em>{evaluations.length ? "/100" : ""}</em></strong><small>best documented fit</small></div>
+				<div><span>Weekly allowance</span><strong>1 <em>free</em></strong><small>renews Monday</small></div>
+			</section>
 			<section className="workspace-grid">
-				<div className="workspace-column">
-					<h2>Employer organizations</h2>
+				<div className="workspace-column" id="jobs">
+					<div className="section-heading"><div><p className="section-kicker">Your workspace</p><h2>Employer organizations</h2></div><span className="count-badge">{organizations.length}</span></div>
 					<form className="inline-form" onSubmit={createOrganization}>
 						<Input
 							value={organizationName}
@@ -254,7 +264,7 @@ export const Workspace = () => {
 					</div>
 				</div>
 				<div className="workspace-column">
-					<h2>Create a job</h2>
+					<div className="section-heading"><div><p className="section-kicker">Build a role</p><h2>Create a job</h2></div></div>
 					<form className="stack-form" onSubmit={createJob}>
 						<Label htmlFor="job-title">Title</Label>
 						<Input
@@ -278,7 +288,7 @@ export const Workspace = () => {
 							Create job
 						</Button>
 					</form>
-					<h2>Jobs</h2>
+					<div className="section-heading jobs-heading"><div><p className="section-kicker">Recent roles</p><h2>Jobs</h2></div><span className="count-badge">{jobs.length}</span></div>
 					<div className="selection-list">
 						{jobs.map((job) => (
 							<button
@@ -296,8 +306,8 @@ export const Workspace = () => {
 						))}
 					</div>
 				</div>
-				<div className="workspace-column">
-					<h2>Requirements and submissions</h2>
+				<div className="workspace-column workspace-column-detail" id="activity">
+					<div className="section-heading"><div><p className="section-kicker">Review with confidence</p><h2>Requirements and submissions</h2></div></div>
 					{selectedJob ? (
 						<>
 							<p className="muted-copy">{selectedJob.title}</p>
