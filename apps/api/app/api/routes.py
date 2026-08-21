@@ -444,11 +444,11 @@ async def list_evaluations(job_id: str, request: Request) -> list[dict[str, obje
 		for evaluation, candidate in rows:
 			assessments = (
 				await session.execute(
-					select(RequirementAssessment).where(
-						RequirementAssessment.evaluation_id == evaluation.id
-					)
+					select(RequirementAssessment, JobRequirement)
+					.join(JobRequirement)
+					.where(RequirementAssessment.evaluation_id == evaluation.id)
 				)
-			).scalars()
+			).all()
 			result.append(
 				{
 					"id": evaluation.id,
@@ -459,11 +459,12 @@ async def list_evaluations(job_id: str, request: Request) -> list[dict[str, obje
 					"eligibility": evaluation.eligibility,
 					"assessments": [
 						{
+							"requirement": requirement.normalized_text,
 							"outcome": assessment.outcome,
 							"reasoning": assessment.reasoning,
 							"evidence": assessment.evidence,
 						}
-						for assessment in assessments
+						for assessment, requirement in assessments
 					],
 				}
 			)

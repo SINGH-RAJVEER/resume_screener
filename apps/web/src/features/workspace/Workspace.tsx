@@ -26,6 +26,9 @@ export const Workspace = () => {
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
 	const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+	const [openEvaluationId, setOpenEvaluationId] = useState<string | null>(
+		null,
+	);
 	const [organizationName, setOrganizationName] = useState("");
 	const [jobTitle, setJobTitle] = useState("");
 	const [description, setDescription] = useState("");
@@ -151,6 +154,7 @@ export const Workspace = () => {
 			const detail = await workspaceClient.job(job.id);
 			setSelectedJob(detail);
 			setEvaluations(await workspaceClient.evaluations(job.id));
+			setOpenEvaluationId(null);
 			setRequirements(
 				detail.requirements.length
 					? detail.requirements.map((requirement) => ({
@@ -193,6 +197,7 @@ export const Workspace = () => {
 			setCandidateName("");
 			setResume(null);
 			setProcessingJobId(result.processingJobId);
+			setEvaluations(await workspaceClient.evaluations(selectedJob.id));
 			setNotice(
 				`Resume queued for processing: ${result.processingJobId}`,
 			);
@@ -398,14 +403,73 @@ export const Workspace = () => {
 									<h3>Results</h3>
 									{evaluations.map((evaluation) => (
 										<div key={evaluation.id}>
-											<strong>
-												{evaluation.candidateName ??
-													"Candidate"}
-											</strong>
-											<span>
-												{evaluation.score ?? "Pending"}{" "}
-												· {evaluation.eligibility}
-											</span>
+											<button
+												onClick={() =>
+													setOpenEvaluationId(
+														(current) =>
+															current ===
+															evaluation.id
+																? null
+																: evaluation.id,
+													)
+												}
+												type="button"
+											>
+												<strong>
+													{evaluation.candidateName ??
+														"Candidate"}
+												</strong>
+												<span>
+													{evaluation.score ??
+														"Pending"}{" "}
+													· {evaluation.eligibility}
+												</span>
+											</button>
+											{openEvaluationId ===
+												evaluation.id && (
+												<div className="assessment-list">
+													{evaluation.assessments.map(
+														(assessment) => (
+															<div
+																key={
+																	assessment.requirement
+																}
+															>
+																<strong>
+																	{
+																		assessment.requirement
+																	}
+																</strong>
+																<span>
+																	{
+																		assessment.outcome
+																	}
+																</span>
+																<p>
+																	{
+																		assessment.reasoning
+																	}
+																</p>
+																{assessment.evidence.map(
+																	(
+																		evidence,
+																	) => (
+																		<blockquote
+																			key={
+																				evidence.blockId
+																			}
+																		>
+																			{
+																				evidence.quote
+																			}
+																		</blockquote>
+																	),
+																)}
+															</div>
+														),
+													)}
+												</div>
+											)}
 										</div>
 									))}
 								</div>

@@ -40,6 +40,7 @@ export interface Evaluation {
 	coverage: number | null;
 	eligibility: string;
 	assessments: Array<{
+		requirement: string;
 		outcome: string;
 		reasoning: string;
 		evidence: Array<{ blockId: string; quote: string }>;
