@@ -1,7 +1,7 @@
 import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
@@ -208,21 +208,19 @@ export const Workspace = () => {
 		}
 	};
 
-	const visibleEvaluations = useMemo(() => {
+	const visibleEvaluations = evaluations.filter((evaluation) => {
 		const query = evaluationQuery.trim().toLowerCase();
-		return evaluations.filter((evaluation) => {
-			const matchesQuery =
-				!query ||
-				(evaluation.candidateName ?? "Candidate")
-					.toLowerCase()
-					.includes(query);
-			const matchesFilter =
-				evaluationFilter === "all" ||
-				evaluation.eligibility === evaluationFilter ||
-				evaluation.status === evaluationFilter;
-			return matchesQuery && matchesFilter;
-		});
-	}, [evaluationFilter, evaluationQuery, evaluations]);
+		const matchesQuery =
+			!query ||
+			(evaluation.candidateName ?? "Candidate")
+				.toLowerCase()
+				.includes(query);
+		const matchesFilter =
+			evaluationFilter === "all" ||
+			evaluation.eligibility === evaluationFilter ||
+			evaluation.status === evaluationFilter;
+		return matchesQuery && matchesFilter;
+	});
 
 	return (
 		<main className="workspace-shell">
