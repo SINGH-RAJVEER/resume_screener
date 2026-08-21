@@ -324,7 +324,7 @@ export const Workspace = () => {
 
 	const copyInvitationLink = () => {
 		if (!invitationToken) return;
-		const link = `${window.location.origin}/sign-up?mode=invited&invitation=${invitationToken}`;
+		const link = `${window.location.origin}/apply/${invitationToken}`;
 		void navigator.clipboard.writeText(link);
 		setCopiedInvitation(true);
 		setTimeout(() => setCopiedInvitation(false), 2000);
@@ -599,7 +599,7 @@ export const Workspace = () => {
 											Single-use Invitation Link:
 										</span>
 										<code className="bg-[var(--soft)] px-2 py-0.5 rounded">
-											{`${window.location.origin}/sign-up?mode=invited&invitation=${invitationToken}`}
+											{`${window.location.origin}/apply/${invitationToken}`}
 										</code>
 									</div>
 									<Button

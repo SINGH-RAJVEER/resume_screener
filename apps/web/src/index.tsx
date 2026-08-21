@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import App from "./App";
+import { InvitationUpload } from "./pages/InvitationUpload";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
 import "@resume-screener/ui/globals.css";
@@ -18,6 +19,7 @@ createRoot(root).render(
 				<Route path="/" element={<App />} />
 				<Route path="/sign-in" element={<SignIn />} />
 				<Route path="/sign-up" element={<SignUp />} />
+				<Route path="/apply/:token" element={<InvitationUpload />} />
 			</Routes>
 		</BrowserRouter>
 	</StrictMode>,

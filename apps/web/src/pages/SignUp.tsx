@@ -12,6 +12,15 @@ export const SignUp = () => {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const invitation = searchParams.get("invitation");
+	const returnTo = searchParams.get("returnTo");
+	const isInvited =
+		searchParams.get("mode") === "invited" || invitation !== null;
+	const destination =
+		returnTo?.startsWith("/") && !returnTo.startsWith("//")
+			? returnTo
+			: invitation
+				? `/?invitation=${invitation}`
+				: "/";
 	const [accountType, setAccountType] = useState<AccountType>(
 		searchParams.get("mode") === "employer" ? "employer" : "candidate",
 	);
@@ -35,14 +44,14 @@ export const SignUp = () => {
 			setError(result.error.message ?? "Account creation failed");
 			return;
 		}
-		navigate(invitation ? `/?invitation=${invitation}` : "/");
+		navigate(destination);
 	};
 
 	const signInPath =
 		accountType === "employer"
 			? "/sign-in?mode=employer"
-			: invitation
-				? `/sign-in?mode=invited&invitation=${invitation}`
+			: isInvited
+				? `/sign-in?mode=invited${invitation ? `&invitation=${invitation}` : ""}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`
 				: "/sign-in?mode=candidate";
 
 	return (
@@ -76,7 +85,7 @@ export const SignUp = () => {
 							<small>Evaluate or submit a resume</small>
 						</span>
 					</button>
-					{!invitation && (
+					{!isInvited && (
 						<button
 							className={
 								accountType === "employer" ? "active" : ""
@@ -93,7 +102,7 @@ export const SignUp = () => {
 					)}
 				</fieldset>
 
-				{invitation && accountType === "candidate" && (
+				{isInvited && accountType === "candidate" && (
 					<p className="auth-context">
 						Create a candidate account to continue your invited
 						submission.

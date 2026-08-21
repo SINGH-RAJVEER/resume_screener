@@ -2,42 +2,17 @@ import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { Textarea } from "@resume-screener/ui/components/textarea";
-import {
-	ArrowRight,
-	CheckCircle2,
-	FileSearch,
-	Link2,
-	UploadCloud,
-} from "lucide-react";
+import { FileSearch } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import {
 	candidateClient,
 	type IndependentEvaluation,
 } from "../features/candidate/client";
 import { authClient } from "../lib/auth-client";
 
-const tokenFromValue = (value: string) => {
-	const trimmed = value.trim();
-	try {
-		const url = new URL(trimmed);
-		return url.searchParams.get("invitation") ?? trimmed;
-	} catch {
-		return trimmed;
-	}
-};
-
 export const CandidateHome = () => {
 	const { data: session } = authClient.useSession();
-	const [searchParams] = useSearchParams();
-	const [invitationValue, setInvitationValue] = useState(
-		searchParams.get("invitation") ?? "",
-	);
-	const [activeToken, setActiveToken] = useState<string | null>(null);
-	const [jobId, setJobId] = useState<string | null>(null);
-	const [resume, setResume] = useState<File | null>(null);
 	const [isWorking, setIsWorking] = useState(false);
-	const [submitted, setSubmitted] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [privateResume, setPrivateResume] = useState<File | null>(null);
 	const [jobDescription, setJobDescription] = useState("");
@@ -75,53 +50,6 @@ export const CandidateHome = () => {
 		}, 2_000);
 		return () => window.clearInterval(interval);
 	}, [loadPrivateHistory, privateEvaluation]);
-
-	const redeem = async (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		const token = tokenFromValue(invitationValue);
-		if (!token) return;
-		setError(null);
-		setIsWorking(true);
-		try {
-			const result = /^[A-Za-z0-9]{8}$/.test(token)
-				? await candidateClient.redeemPasscode(token)
-				: await candidateClient.redeemInvitation(token);
-			setActiveToken(token);
-			setJobId(result.jobId);
-		} catch (reason) {
-			setError(
-				reason instanceof Error
-					? reason.message
-					: "Invitation could not be opened",
-			);
-		} finally {
-			setIsWorking(false);
-		}
-	};
-
-	const upload = async (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (!activeToken || !jobId || !resume) return;
-		setError(null);
-		setIsWorking(true);
-		try {
-			await candidateClient.uploadInvitedResume(
-				jobId,
-				activeToken,
-				resume,
-				session?.user.name ?? "",
-			);
-			setSubmitted(true);
-		} catch (reason) {
-			setError(
-				reason instanceof Error
-					? reason.message
-					: "Resume upload failed",
-			);
-		} finally {
-			setIsWorking(false);
-		}
-	};
 
 	const startPrivateEvaluation = async (
 		event: FormEvent<HTMLFormElement>,
@@ -195,97 +123,12 @@ export const CandidateHome = () => {
 					<p className="eyebrow">Candidate workspace</p>
 					<h1>Your resume, under your control.</h1>
 					<p>
-						Submit a resume through an employer invitation.
-						Employers only receive the document you deliberately
-						submit.
+						Run private checks without sharing your resume with an
+						employer.
 					</p>
 				</header>
 
 				<div className="candidate-grid">
-					<section className="candidate-action">
-						<div className="candidate-action-heading">
-							<Link2 />
-							<div>
-								<h2>Employer invitation</h2>
-								<p>Use the link sent by the employer.</p>
-							</div>
-						</div>
-						{submitted ? (
-							<div className="submission-success">
-								<CheckCircle2 />
-								<h3>Resume submitted</h3>
-								<p>
-									Your document was received and queued for
-									processing. Evaluation results remain
-									private to the employer.
-								</p>
-							</div>
-						) : jobId && activeToken ? (
-							<form className="candidate-form" onSubmit={upload}>
-								<div className="form-field">
-									<Label htmlFor="invited-resume">
-										Resume document
-									</Label>
-									<Input
-										accept=".pdf,.docx,.txt"
-										id="invited-resume"
-										onChange={(event) =>
-											setResume(
-												event.currentTarget
-													.files?.[0] ?? null,
-											)
-										}
-										required
-										type="file"
-									/>
-									<p className="form-hint">
-										PDF, DOCX, or TXT. Maximum 20 MB.
-										Scanned PDFs are not supported.
-									</p>
-								</div>
-								<Button
-									disabled={!resume || isWorking}
-									type="submit"
-								>
-									<UploadCloud />
-									{isWorking
-										? "Uploading..."
-										: "Submit resume"}
-								</Button>
-							</form>
-						) : (
-							<form className="candidate-form" onSubmit={redeem}>
-								<div className="form-field">
-									<Label htmlFor="invitation">
-										Invitation link or passcode
-									</Label>
-									<Input
-										id="invitation"
-										onChange={(event) =>
-											setInvitationValue(
-												event.currentTarget.value,
-											)
-										}
-										placeholder="Paste a link or enter an 8-character passcode"
-										required
-										value={invitationValue}
-									/>
-								</div>
-								<Button disabled={isWorking} type="submit">
-									{isWorking
-										? "Opening invitation..."
-										: "Continue"}
-									<ArrowRight />
-								</Button>
-							</form>
-						)}
-						{error && (
-							<p className="form-error" role="alert">
-								{error}
-							</p>
-						)}
-					</section>
-
 					<section className="candidate-action">
 						<div className="candidate-action-heading">
 							<FileSearch />
@@ -347,6 +190,7 @@ export const CandidateHome = () => {
 								</Button>
 							</form>
 						)}
+						{error && <p className="form-error">{error}</p>}
 						{privateHistory.length > 0 && !privateEvaluation && (
 							<div className="private-history">
 								<h3>Previous checks</h3>

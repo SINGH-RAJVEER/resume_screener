@@ -12,6 +12,15 @@ export const SignIn = () => {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const invitation = searchParams.get("invitation");
+	const returnTo = searchParams.get("returnTo");
+	const isInvited =
+		searchParams.get("mode") === "invited" || invitation !== null;
+	const destination =
+		returnTo?.startsWith("/") && !returnTo.startsWith("//")
+			? returnTo
+			: invitation
+				? `/?invitation=${invitation}`
+				: "/";
 	const [accountType, setAccountType] = useState<AccountType>(
 		searchParams.get("mode") === "employer" ? "employer" : "candidate",
 	);
@@ -34,14 +43,14 @@ export const SignIn = () => {
 			setError(result.error.message ?? "Sign in failed");
 			return;
 		}
-		navigate(invitation ? `/?invitation=${invitation}` : "/");
+		navigate(destination);
 	};
 
 	const signUpPath =
 		accountType === "employer"
 			? "/sign-up?mode=employer"
-			: invitation
-				? `/sign-up?mode=invited&invitation=${invitation}`
+			: isInvited
+				? `/sign-up?mode=invited${invitation ? `&invitation=${invitation}` : ""}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`
 				: "/sign-up?mode=candidate";
 
 	return (
@@ -72,7 +81,7 @@ export const SignIn = () => {
 							<small>My resume and invitations</small>
 						</span>
 					</button>
-					{!invitation && (
+					{!isInvited && (
 						<button
 							className={
 								accountType === "employer" ? "active" : ""
@@ -89,7 +98,7 @@ export const SignIn = () => {
 					)}
 				</fieldset>
 
-				{invitation && accountType === "candidate" && (
+				{isInvited && accountType === "candidate" && (
 					<p className="auth-context">
 						Sign in to continue your invited resume submission.
 					</p>
