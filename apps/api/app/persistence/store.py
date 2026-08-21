@@ -84,7 +84,9 @@ class SQLAlchemyStore:
         )
         try:
             async with self._sessions.begin() as session:
-                session.add_all([user, account])
+                session.add(user)
+                await session.flush()
+                session.add(account)
         except IntegrityError as error:
             if _is_email_conflict(error):
                 raise EmailAlreadyUsedError from error
