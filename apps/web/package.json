@@ -12,6 +12,7 @@
 	},
 	"dependencies": {
 		"@resume-screener/ui": "workspace:*",
+		"lucide-react": "^1.33.0",
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0",
 		"react-router-dom": "7.18.2"
