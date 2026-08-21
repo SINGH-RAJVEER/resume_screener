@@ -8,8 +8,8 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
-	AsyncEngine,
-	AsyncSession,
+    AsyncEngine,
+    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
@@ -32,12 +32,15 @@ class UserRecord:
     email: str
     created_at: datetime
     updated_at: datetime
+    account_type: str = "candidate"
     email_verified: bool = False
     image: str | None = None
 
 
 class Store(Protocol):
-    async def register(self, name: str, email: str, password_hash: str) -> UserRecord: ...
+    async def register(
+        self, name: str, email: str, password_hash: str, account_type: str = "candidate"
+    ) -> UserRecord: ...
 
     async def credentials(self, email: str) -> tuple[UserRecord, str]: ...
 
@@ -63,12 +66,15 @@ class SQLAlchemyStore:
     def sessions(self) -> async_sessionmaker[AsyncSession]:
         return self._sessions
 
-    async def register(self, name: str, email: str, password_hash: str) -> UserRecord:
+    async def register(
+        self, name: str, email: str, password_hash: str, account_type: str = "candidate"
+    ) -> UserRecord:
         now = datetime.now(UTC)
         user = User(
             id=_new_id(),
             name=name,
             email=email,
+            account_type=account_type,
             email_verified=False,
             created_at=now,
             updated_at=now,
@@ -119,6 +125,7 @@ def _to_record(user: User) -> UserRecord:
         id=user.id,
         name=user.name,
         email=user.email,
+        account_type=user.account_type,
         email_verified=user.email_verified,
         image=user.image,
         created_at=user.created_at,

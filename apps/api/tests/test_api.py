@@ -33,11 +33,13 @@ class FakeStore:
         self.credentials_error: Exception | None = None
         self.user_error: Exception | None = None
 
-    async def register(self, name: str, email: str, password_hash: str) -> UserRecord:
+    async def register(
+        self, name: str, email: str, password_hash: str, account_type: str = "candidate"
+    ) -> UserRecord:
         if self.register_error is not None:
             raise self.register_error
         self.password_hash = password_hash
-        self.user_record = make_user(name=name, email=email)
+        self.user_record = make_user(name=name, email=email, account_type=account_type)
         return self.user_record
 
     async def credentials(self, email: str) -> tuple[UserRecord, str]:
@@ -55,9 +57,11 @@ class FakeStore:
         return self.user_record
 
 
-def make_user(name: str = "Ada", email: str = "ada@example.com") -> UserRecord:
+def make_user(
+    name: str = "Ada", email: str = "ada@example.com", account_type: str = "candidate"
+) -> UserRecord:
     now = datetime.now(UTC)
-    return UserRecord("user-1", name, email, now, now)
+    return UserRecord("user-1", name, email, now, now, account_type)
 
 
 def token_for(store: Store, user: UserRecord, ttl: timedelta = timedelta(hours=1)) -> str:
@@ -108,6 +112,30 @@ async def test_signup_normalizes_email_hashes_password_and_returns_jwt() -> None
         response.json()["token"]
     )
     assert authenticated.id == "user-1"
+
+
+async def test_employer_signup_creates_an_employer_account() -> None:
+    store = FakeStore()
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/employer/auth/sign-up/email",
+            json=SIGN_UP_BODY,
+        )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["accountType"] == "employer"
+
+
+async def test_candidate_signin_rejects_an_employer_account() -> None:
+    store = FakeStore(make_user(account_type="employer"))
+    store.password_hash = bcrypt.hashpw(b"password123", bcrypt.gensalt()).decode()
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/auth/sign-in/email",
+            json={"email": "ada@example.com", "password": "password123"},
+        )
+
+    assert response.status_code == 401
 
 
 async def test_signup_rejects_trailing_json() -> None:

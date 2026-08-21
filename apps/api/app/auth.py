@@ -52,15 +52,19 @@ class AuthService:
         self._jwt_secret = jwt_secret
         self._jwt_ttl = jwt_ttl
 
-    async def register(self, name: str, email: str, password: str) -> AuthResult:
+    async def register(
+        self, name: str, email: str, password: str, account_type: str = "candidate"
+    ) -> AuthResult:
         name = name.strip()
         email = email.strip().lower()
         validate_credentials(name, email, password)
         password_hash = await to_thread(hash_password, password)
-        user = await self._store.register(name, email, password_hash)
+        user = await self._store.register(name, email, password_hash, account_type)
         return self.issue_token(user)
 
-    async def sign_in(self, email: str, password: str) -> AuthResult:
+    async def sign_in(
+        self, email: str, password: str, expected_account_type: str | None = None
+    ) -> AuthResult:
         email = email.strip().lower()
         try:
             user, password_hash = await self._store.credentials(email)
@@ -69,6 +73,8 @@ class AuthService:
         if len(password.encode()) > 72 or not await to_thread(
             check_password, password, password_hash
         ):
+            raise InvalidCredentialsError
+        if expected_account_type is not None and user.account_type != expected_account_type:
             raise InvalidCredentialsError
         return self.issue_token(user)
 
