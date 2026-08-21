@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
+from .normalizer import normalize_resume
 from .parser import DocumentParseError, extract_blocks
 
 logger = logging.getLogger("resume-screener.worker")
@@ -122,11 +123,14 @@ class Worker:
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
 		async with self._engine.begin() as connection:
+			normalized_facts = normalize_resume(blocks["blocks"])
 			await connection.execute(
 				text(
 					"""
 					UPDATE resume_version
-					SET extraction_blocks = CAST(:blocks AS jsonb), quality_state = 'ready',
+					SET extraction_blocks = CAST(:blocks AS jsonb),
+						normalized_facts = CAST(:normalized_facts AS jsonb),
+						quality_state = 'ready',
 						parser_version = 'local-1'
 					WHERE id = :version_id
 						AND EXISTS (
@@ -138,6 +142,7 @@ class Worker:
 				),
 				{
 					"blocks": json.dumps(blocks),
+					"normalized_facts": json.dumps(normalized_facts),
 					"version_id": job.payload_reference,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
