@@ -1,126 +1,142 @@
 import { Button } from "@resume-screener/ui/components/button";
-import {
-	Card,
-	CardContent,
-	CardFooter,
-	CardHeader,
-	CardTitle,
-} from "@resume-screener/ui/components/card";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
+import { ArrowLeft, BriefcaseBusiness, UserRound } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
 
+type AccountType = "candidate" | "employer";
+
 export const SignIn = () => {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
-	const mode = searchParams.get("mode");
-	const isEmployer = mode === "employer";
-	const modeLabel =
-		mode === "employer"
-			? "your organization"
-			: mode === "invited"
-				? "your invitation"
-				: "your resume";
+	const invitation = searchParams.get("invitation");
+	const [accountType, setAccountType] = useState<AccountType>(
+		searchParams.get("mode") === "employer" ? "employer" : "candidate",
+	);
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-		e.preventDefault();
+	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
 		setError(null);
+		setIsSubmitting(true);
 
-		const { error: authError } = await (isEmployer
+		const result = await (accountType === "employer"
 			? authClient.signIn.employer
-			: authClient.signIn.email)({
-			email,
-			password,
-		});
+			: authClient.signIn.email)({ email, password });
 
-		if (authError) {
-			setError(authError.message ?? "Sign in failed");
+		setIsSubmitting(false);
+		if (result.error) {
+			setError(result.error.message ?? "Sign in failed");
 			return;
 		}
-		navigate("/");
+		navigate(invitation ? `/?invitation=${invitation}` : "/");
 	};
 
+	const signUpPath =
+		accountType === "employer"
+			? "/sign-up?mode=employer"
+			: invitation
+				? `/sign-up?mode=invited&invitation=${invitation}`
+				: "/sign-up?mode=candidate";
+
 	return (
-		<main className="auth-shell">
-			<section className="auth-aside">
-				<div className="brand-mark">
+		<main className="auth-page">
+			<Link className="auth-back" to="/">
+				<ArrowLeft /> Back to home
+			</Link>
+			<section className="auth-panel" aria-labelledby="sign-in-title">
+				<div className="brand-mark auth-brand">
 					<span>rs</span>
 					<span className="brand-name">resume screener</span>
 				</div>
-				<div>
-					<p className="eyebrow">A better signal</p>
-					<h1>Return to the evidence.</h1>
-					<p>
-						Keep your private evaluations, job criteria, and
-						documented matches in one quiet workspace.
+				<header className="auth-heading">
+					<h1 id="sign-in-title">Welcome back</h1>
+					<p>Choose the workspace attached to your account.</p>
+				</header>
+
+				<fieldset className="account-type-control">
+					<legend>Account type</legend>
+					<button
+						className={accountType === "candidate" ? "active" : ""}
+						onClick={() => setAccountType("candidate")}
+						type="button"
+					>
+						<UserRound />
+						<span>
+							<strong>Candidate</strong>
+							<small>My resume and invitations</small>
+						</span>
+					</button>
+					{!invitation && (
+						<button
+							className={
+								accountType === "employer" ? "active" : ""
+							}
+							onClick={() => setAccountType("employer")}
+							type="button"
+						>
+							<BriefcaseBusiness />
+							<span>
+								<strong>Employer</strong>
+								<small>Jobs and candidate review</small>
+							</span>
+						</button>
+					)}
+				</fieldset>
+
+				{invitation && accountType === "candidate" && (
+					<p className="auth-context">
+						Sign in to continue your invited resume submission.
 					</p>
-				</div>
-				<div className="auth-aside-footer">
-					<span className="status-dot" /> Your reports stay private to
-					you.
-				</div>
-			</section>
-			<section className="auth-form-area">
-				<Card className="auth-card">
-					<form onSubmit={handleSubmit}>
-						<CardHeader>
-							<CardTitle asChild className="auth-title">
-								<h1>Sign in to {modeLabel}</h1>
-							</CardTitle>
-						</CardHeader>
-						<CardContent className="auth-fields">
-							<div className="form-field">
-								<Label htmlFor="email">Email</Label>
-								<Input
-									id="email"
-									type="email"
-									autoComplete="email"
-									value={email}
-									onChange={(event) =>
-										setEmail(event.currentTarget.value)
-									}
-									required
-								/>
-							</div>
-							<div className="form-field">
-								<Label htmlFor="password">Password</Label>
-								<Input
-									id="password"
-									type="password"
-									autoComplete="current-password"
-									value={password}
-									onChange={(event) =>
-										setPassword(event.currentTarget.value)
-									}
-									required
-								/>
-							</div>
-							{error && <p className="form-error">{error}</p>}
-						</CardContent>
-						<CardFooter className="auth-footer">
-							<Button type="submit" className="w-full">
-								Sign In
-							</Button>
-							<p className="auth-switch">
-								<Link
-									className="auth-link"
-									to={
-										isEmployer
-											? "/sign-up?mode=employer"
-											: "/sign-up"
-									}
-								>
-									Sign Up
-								</Link>
-							</p>
-						</CardFooter>
-					</form>
-				</Card>
+				)}
+
+				<form className="auth-form" onSubmit={handleSubmit}>
+					<div className="form-field">
+						<Label htmlFor="email">Email address</Label>
+						<Input
+							autoComplete="email"
+							id="email"
+							onChange={(event) =>
+								setEmail(event.currentTarget.value)
+							}
+							required
+							type="email"
+							value={email}
+						/>
+					</div>
+					<div className="form-field">
+						<Label htmlFor="password">Password</Label>
+						<Input
+							autoComplete="current-password"
+							id="password"
+							onChange={(event) =>
+								setPassword(event.currentTarget.value)
+							}
+							required
+							type="password"
+							value={password}
+						/>
+					</div>
+					{error && (
+						<p className="form-error" role="alert">
+							{error}
+						</p>
+					)}
+					<Button disabled={isSubmitting} size="lg" type="submit">
+						{isSubmitting
+							? "Signing in..."
+							: `Sign in as ${accountType}`}
+					</Button>
+				</form>
+
+				<p className="auth-switch">
+					New here? <Link to={signUpPath}>Create an account</Link>
+				</p>
 			</section>
 		</main>
 	);

@@ -1,3 +1,12 @@
+import { Button } from "@resume-screener/ui/components/button";
+import {
+	ArrowRight,
+	BriefcaseBusiness,
+	Check,
+	FileSearch,
+	Link2,
+	UserRound,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { Workspace } from "./features/workspace/Workspace";
 import { authClient } from "./lib/auth-client";
@@ -8,108 +17,159 @@ const App = () => {
 
 	if (isPending) {
 		return (
-			<main className="app-shell">
-				<p className="muted-copy">Checking your session...</p>
+			<main className="app-shell loading-page">
+				<span className="status-dot" />
+				Loading your workspace...
 			</main>
 		);
 	}
 
-	if (session?.user)
+	if (session?.user) {
 		return session.user.accountType === "employer" ? (
 			<Workspace />
 		) : (
 			<CandidateHome />
 		);
+	}
+
 	return (
-		<main className="landing-shell">
-			<section className="landing-copy">
+		<main className="public-page">
+			<header className="public-header">
 				<div className="brand-mark">
 					<span>rs</span>
 					<span className="brand-name">resume screener</span>
 				</div>
-				<p className="eyebrow">Evidence before instinct</p>
-				<h1>See the signal in every resume.</h1>
-				<p className="landing-lede">
-					A calmer way to compare documented experience with the
-					requirements that actually matter.
-				</p>
-				<section className="landing-paths" aria-labelledby="path-label">
-					<p className="path-label" id="path-label">
-						What brings you here?
+				<nav>
+					<a href="#how-it-works">How it works</a>
+					<Link to="/sign-in">Sign in</Link>
+					<Button asChild size="sm">
+						<Link to="/sign-up?mode=candidate">Get started</Link>
+					</Button>
+				</nav>
+			</header>
+
+			<section className="public-hero">
+				<div className="public-hero-copy">
+					<p className="eyebrow">Evidence-backed resume evaluation</p>
+					<h1>Understand the match. Verify the evidence.</h1>
+					<p>
+						Compare resumes with confirmed job requirements without
+						reducing people to keyword counts or an unexplained
+						score.
 					</p>
-					<Link
-						className="landing-path"
-						to="/sign-up?mode=independent"
-					>
-						<span>
-							<b>01</b>
-							<strong>Check my resume</strong>
-							<small>
-								Compare your experience with a job description.
-							</small>
-						</span>
-						<i aria-hidden="true">↗</i>
-					</Link>
-					<Link className="landing-path" to="/sign-up?mode=employer">
-						<span>
-							<b>02</b>
-							<strong>Screen for an organization</strong>
-							<small>
-								Create jobs and review candidate submissions.
-							</small>
-						</span>
-						<i aria-hidden="true">↗</i>
-					</Link>
-					<div className="landing-path landing-path-note">
-						<span>
-							<b>03</b>
-							<strong>Submit through an invitation</strong>
-							<small>
-								Open the job-scoped link you received to upload.
-							</small>
-						</span>
+					<div className="public-actions">
+						<Button asChild size="lg">
+							<Link to="/sign-up?mode=candidate">
+								<UserRound />
+								Check my resume
+							</Link>
+						</Button>
+						<Button asChild size="lg" variant="outline">
+							<Link to="/sign-up?mode=employer">
+								<BriefcaseBusiness />
+								I’m hiring
+							</Link>
+						</Button>
 					</div>
-					<Link className="button button-quiet" to="/sign-in">
-						Already have an account? Sign in{" "}
-						<span aria-hidden="true">→</span>
-					</Link>
-				</section>
-				<div className="landing-note">
-					<span className="status-dot" /> One free independent
-					evaluation every week
+					<ul className="trust-list">
+						<li>
+							<Check />
+							Criterion-level reasoning
+						</li>
+						<li>
+							<Check />
+							Quoted source evidence
+						</li>
+						<li>
+							<Check />
+							Private by default
+						</li>
+					</ul>
+				</div>
+
+				<aside
+					className="report-preview"
+					aria-label="Example evaluation report"
+				>
+					<header>
+						<span>Example evaluation</span>
+						<strong>Private report</strong>
+					</header>
+					<div className="report-score">
+						<span>Documented fit</span>
+						<strong>
+							84<small>/100</small>
+						</strong>
+						<p>92% evidence coverage</p>
+					</div>
+					<div className="report-criteria">
+						<div>
+							<span>React architecture</span>
+							<b className="met">Met</b>
+						</div>
+						<div>
+							<span>5+ years experience</span>
+							<b className="partial">Partial</b>
+						</div>
+						<div>
+							<span>System design</span>
+							<b className="met">Met</b>
+						</div>
+					</div>
+					<blockquote>
+						“Owned the migration of a 40k-line frontend to a typed
+						component system.”
+					</blockquote>
+				</aside>
+			</section>
+
+			<section className="workflow-section" id="how-it-works">
+				<header>
+					<p className="eyebrow">Choose your workflow</p>
+					<h2>One product, two private workspaces.</h2>
+				</header>
+				<div className="workflow-grid">
+					<article>
+						<FileSearch />
+						<span>For candidates</span>
+						<h3>Check a resume or submit through an invitation.</h3>
+						<p>
+							Your independent reports remain private. Invited
+							submissions share only the resume you choose with
+							that employer.
+						</p>
+						<Link to="/sign-up?mode=candidate">
+							Create candidate account <ArrowRight />
+						</Link>
+					</article>
+					<article>
+						<BriefcaseBusiness />
+						<span>For employers</span>
+						<h3>Confirm criteria before evaluating candidates.</h3>
+						<p>
+							Create jobs, review extracted requirements, upload
+							resumes, and inspect the evidence behind each top
+							match.
+						</p>
+						<Link to="/sign-up?mode=employer">
+							Create employer account <ArrowRight />
+						</Link>
+					</article>
+					<article>
+						<Link2 />
+						<span>Have an invitation?</span>
+						<h3>Sign in, then paste or open your invitation.</h3>
+						<p>
+							Invitation links are single-use and job-scoped. They
+							never expose the employer’s evaluation or hiring
+							decision.
+						</p>
+						<Link to="/sign-in?mode=invited">
+							Continue an invitation <ArrowRight />
+						</Link>
+					</article>
 				</div>
 			</section>
-			<aside className="landing-preview" aria-label="Product preview">
-				<div className="preview-topline">
-					<span>evaluation / 024</span>
-					<span>private report</span>
-				</div>
-				<div className="preview-score">
-					<strong>84</strong>
-					<span>
-						/ 100
-						<br />
-						<small>documented fit</small>
-					</span>
-				</div>
-				<div className="preview-rule" />
-				<div className="preview-row">
-					<span>React architecture</span>
-					<b className="outcome-met">Met</b>
-				</div>
-				<div className="preview-row">
-					<span>5+ years experience</span>
-					<b className="outcome-partial">Partial</b>
-				</div>
-				<div className="preview-row">
-					<span>Evidence coverage</span>
-					<b>92%</b>
-				</div>
-				<blockquote>
-					“Owned the migration of a 40k-line frontend to a typed
-					component system.”
-				</blockquote>
-			</aside>
 		</main>
 	);
 };
