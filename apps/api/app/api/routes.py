@@ -388,7 +388,11 @@ async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
 
 @router.post("/api/jobs/{job_id}/resumes", status_code=202)
 async def upload_resume(
-	job_id: str, request: Request, file: UploadFile = File(), candidate_name: str = Form("")
+	job_id: str,
+	request: Request,
+	file: UploadFile = File(),
+	candidate_name: str = Form(""),
+	invitation_token: str = Form(""),
 ) -> dict[str, str]:
 	user = await require_user(request)
 	store = require_sqlalchemy_store(request)
@@ -401,12 +405,34 @@ async def upload_resume(
 		job = await session.get(Job, job_id)
 		if job is None:
 			raise APIError(404, "NOT_FOUND", "Job not found")
-		await require_write_membership(session, job.organization_id, user.id)
+		invitation: Invitation | None = None
+		if invitation_token:
+			invitation = (
+				await session.execute(
+					select(Invitation).where(
+						Invitation.token_hash == sha256(invitation_token.encode()).hexdigest()
+					)
+				)
+			).scalar_one_or_none()
+			if (
+				invitation is None
+				or invitation.job_id != job.id
+				or invitation.redeeming_user_id != user.id
+				or invitation.expires_at <= datetime.now(UTC)
+				or invitation.revoked_at is not None
+				or invitation.resume_submission_id is not None
+			):
+				raise APIError(404, "NOT_FOUND", "Invitation is unavailable")
+		else:
+			await require_write_membership(session, job.organization_id, user.id)
 		job_version = await latest_job_version(session, job.id)
 		if job_version.confirmed_at is None:
 			raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
 		candidate = CandidateRecord(
-			id=new_id(), organization_id=job.organization_id, full_name=candidate_name or None
+			id=new_id(),
+			organization_id=job.organization_id,
+			user_id=user.id if invitation is not None else None,
+			full_name=candidate_name or None,
 		)
 		document = ResumeDocument(
 			id=new_id(),
@@ -445,6 +471,8 @@ async def upload_resume(
 			job_version_id=job_version.id,
 			resume_version_id=version.id,
 		)
+		if invitation is not None:
+			invitation.resume_submission_id = submission.id
 		session.add_all([candidate, document, version, submission, processing, evaluation])
 		LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
 			document.storage_key, content

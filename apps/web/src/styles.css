@@ -424,6 +424,15 @@ select {
 	display: grid;
 	gap: 0.7rem;
 }
+.requirements-list input:not(.weight-input) {
+	min-width: 0;
+}
+.requirements-list select {
+	max-width: 7.5rem;
+}
+.requirements-list .weight-input {
+	max-width: 4rem;
+}
 .stack-form {
 	align-content: start;
 }
@@ -464,6 +473,34 @@ select {
 	gap: 0;
 	margin-top: 1rem;
 	padding-top: 1rem;
+}
+.results-heading {
+	align-items: end;
+	display: flex;
+	justify-content: space-between;
+	margin-bottom: 0.5rem;
+}
+.results-heading h3 {
+	margin: 0;
+}
+.results-heading span {
+	color: var(--ink-soft);
+	display: block;
+	font-size: 0.7rem;
+	margin-top: 0.25rem;
+}
+.result-filters {
+	display: flex;
+	gap: 0.5rem;
+}
+.result-filters input {
+	max-width: 9rem;
+}
+.result-filters select {
+	max-width: 9rem;
+}
+.empty-results {
+	padding: 1rem 0;
 }
 .evaluation-list > div {
 	border-bottom: 1px solid var(--line);

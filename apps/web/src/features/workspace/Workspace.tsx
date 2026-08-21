@@ -1,7 +1,7 @@
 import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
@@ -36,6 +36,8 @@ export const Workspace = () => {
 	const [candidateName, setCandidateName] = useState("");
 	const [resume, setResume] = useState<File | null>(null);
 	const [processingJobId, setProcessingJobId] = useState<string | null>(null);
+	const [evaluationQuery, setEvaluationQuery] = useState("");
+	const [evaluationFilter, setEvaluationFilter] = useState("all");
 	const [notice, setNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
@@ -205,6 +207,22 @@ export const Workspace = () => {
 			reportError(reason);
 		}
 	};
+
+	const visibleEvaluations = useMemo(() => {
+		const query = evaluationQuery.trim().toLowerCase();
+		return evaluations.filter((evaluation) => {
+			const matchesQuery =
+				!query ||
+				(evaluation.candidateName ?? "Candidate")
+					.toLowerCase()
+					.includes(query);
+			const matchesFilter =
+				evaluationFilter === "all" ||
+				evaluation.eligibility === evaluationFilter ||
+				evaluation.status === evaluationFilter;
+			return matchesQuery && matchesFilter;
+		});
+	}, [evaluationFilter, evaluationQuery, evaluations]);
 
 	return (
 		<main className="workspace-shell">
@@ -455,6 +473,31 @@ export const Workspace = () => {
 												Ignored
 											</option>
 										</select>
+										<Input
+											aria-label="Requirement weight"
+											className="weight-input"
+											max={10}
+											min={1}
+											onChange={(event) =>
+												setRequirements((current) =>
+													current.map(
+														(item, itemIndex) =>
+															itemIndex === index
+																? {
+																		...item,
+																		weight: Number(
+																			event
+																				.currentTarget
+																				.value,
+																		),
+																	}
+																: item,
+													),
+												)
+											}
+											type="number"
+											value={requirement.weight}
+										/>
 									</div>
 								))}
 							</div>
@@ -499,8 +542,55 @@ export const Workspace = () => {
 							)}
 							{evaluations.length > 0 && (
 								<div className="evaluation-list">
-									<h3>Results</h3>
-									{evaluations.map((evaluation) => (
+									<div className="results-heading">
+										<div>
+											<h3>Top matches</h3>
+											<span>
+												{visibleEvaluations.length} of{" "}
+												{evaluations.length} shown
+											</span>
+										</div>
+										<div className="result-filters">
+											<Input
+												aria-label="Search candidates"
+												onChange={(event) =>
+													setEvaluationQuery(
+														event.currentTarget
+															.value,
+													)
+												}
+												placeholder="Search candidates"
+												value={evaluationQuery}
+											/>
+											<select
+												aria-label="Filter evaluations"
+												onChange={(event) =>
+													setEvaluationFilter(
+														event.currentTarget
+															.value,
+													)
+												}
+												value={evaluationFilter}
+											>
+												<option value="all">
+													All outcomes
+												</option>
+												<option value="eligible">
+													Eligible
+												</option>
+												<option value="needs_review">
+													Needs review
+												</option>
+												<option value="not_eligible">
+													Not eligible
+												</option>
+												<option value="processing">
+													Processing
+												</option>
+											</select>
+										</div>
+									</div>
+									{visibleEvaluations.map((evaluation) => (
 										<div key={evaluation.id}>
 											<button
 												onClick={() =>
@@ -571,6 +661,11 @@ export const Workspace = () => {
 											)}
 										</div>
 									))}
+									{visibleEvaluations.length === 0 && (
+										<p className="muted-copy empty-results">
+											No evaluations match these filters.
+										</p>
+									)}
 								</div>
 							)}
 						</>
