@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Workspace } from "./features/workspace/Workspace";
 import { authClient } from "./lib/auth-client";
+import { CandidateHome } from "./pages/CandidateHome";
 
 const App = () => {
 	const { data: session, isPending } = authClient.useSession();
@@ -13,7 +14,12 @@ const App = () => {
 		);
 	}
 
-	if (session?.user) return <Workspace />;
+	if (session?.user)
+		return session.user.accountType === "employer" ? (
+			<Workspace />
+		) : (
+			<CandidateHome />
+		);
 	return (
 		<main className="landing-shell">
 			<section className="landing-copy">
