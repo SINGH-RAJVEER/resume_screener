@@ -186,6 +186,8 @@ class Job(Base):
         ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    application_opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    application_closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -370,7 +372,10 @@ class RequirementAssessment(Base):
 
 class Invitation(Base):
     __tablename__ = "invitation"
-    __table_args__ = (UniqueConstraint("token_hash", name="uq_invitation_token_hash"),)
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_invitation_token_hash"),
+        UniqueConstraint("passcode_hash", name="uq_invitation_passcode_hash"),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"), nullable=False)
@@ -378,6 +383,7 @@ class Invitation(Base):
         ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
     )
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    passcode_hash: Mapped[str | None] = mapped_column(Text)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     redeeming_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("user.id", ondelete="SET NULL")

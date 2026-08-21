@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import StringIO
 from pathlib import Path
-from secrets import token_urlsafe
+from secrets import choice, token_urlsafe
+from string import ascii_uppercase, digits
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
@@ -99,6 +100,11 @@ class JobRequest(RequestModel):
     description: str
 
 
+class ApplicationWindowRequest(RequestModel):
+    opens_at: datetime
+    closes_at: datetime
+
+
 class RequirementRequest(RequestModel):
     stable_id: str
     normalized_text: str
@@ -112,6 +118,10 @@ class RequirementConfirmationRequest(RequestModel):
 
 class InvitationRequest(RequestModel):
     expires_in_hours: int = 168
+
+
+class InvitationPasscodeRequest(RequestModel):
+    passcode: str
 
 
 router = APIRouter()
@@ -401,6 +411,12 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
             "id": job.id,
             "organizationId": job.organization_id,
             "title": job.title,
+            "applicationOpensAt": job.application_opens_at.isoformat()
+            if job.application_opens_at
+            else None,
+            "applicationClosesAt": job.application_closes_at.isoformat()
+            if job.application_closes_at
+            else None,
             "description": version.source_text,
             "confirmed": version.confirmed_at is not None,
             "draftRequirements": version.draft_requirements.get("requirements", [])
@@ -417,6 +433,31 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
                 for requirement in requirements
             ],
         }
+
+
+@router.put("/api/jobs/{job_id}/application-window")
+async def set_application_window(
+    job_id: str, input_data: ApplicationWindowRequest, request: Request
+) -> dict[str, str]:
+    if input_data.opens_at.tzinfo is None or input_data.closes_at.tzinfo is None:
+        raise APIError(
+            400, "INVALID_REQUEST", "Application window timestamps must include a timezone"
+        )
+    if input_data.closes_at <= input_data.opens_at:
+        raise APIError(400, "INVALID_REQUEST", "Application close must be after application open")
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise APIError(404, "NOT_FOUND", "Job not found")
+        await require_write_membership(session, job.organization_id, user.id)
+        job.application_opens_at = input_data.opens_at
+        job.application_closes_at = input_data.closes_at
+    return {
+        "opensAt": input_data.opens_at.isoformat(),
+        "closesAt": input_data.closes_at.isoformat(),
+    }
 
 
 @router.post("/api/jobs/{job_id}/requirements", status_code=201)
@@ -478,20 +519,29 @@ async def create_invitation(
         if job is None:
             raise APIError(404, "NOT_FOUND", "Job not found")
         await require_write_membership(session, job.organization_id, user.id)
+        if not application_is_open(job):
+            raise APIError(409, "APPLICATIONS_CLOSED", "Job applications are not open")
+        passcode = "".join(choice(ascii_uppercase + digits) for _ in range(8))
         invitation = Invitation(
             id=new_id(),
             job_id=job.id,
             creator_user_id=user.id,
             token_hash=sha256(token.encode()).hexdigest(),
+            passcode_hash=sha256(passcode.encode()).hexdigest(),
             expires_at=datetime.now(UTC) + timedelta(hours=input_data.expires_in_hours),
         )
         session.add(invitation)
-    return {"id": invitation.id, "token": token, "expiresAt": invitation.expires_at.isoformat()}
+    return {
+        "id": invitation.id,
+        "token": token,
+        "passcode": passcode,
+        "expiresAt": invitation.expires_at.isoformat(),
+    }
 
 
 @router.post("/api/invitations/{token}/redeem")
 async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
-    user = await require_user(request)
+    user = await require_candidate(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         invitation = (
@@ -501,8 +551,42 @@ async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
                 )
             )
         ).scalar_one_or_none()
+        job = await session.get(Job, invitation.job_id) if invitation else None
         if (
             invitation is None
+            or job is None
+            or not application_is_open(job)
+            or invitation.revoked_at is not None
+            or invitation.expires_at <= datetime.now(UTC)
+            or invitation.resume_submission_id is not None
+        ):
+            raise APIError(404, "NOT_FOUND", "Invitation is unavailable")
+        if invitation.redeeming_user_id not in {None, user.id}:
+            raise APIError(409, "INVITATION_REDEEMED", "Invitation was redeemed by another user")
+        invitation.redeeming_user_id = user.id
+        return {"jobId": invitation.job_id, "invitationId": invitation.id}
+
+
+@router.post("/api/invitations/redeem")
+async def redeem_invitation_passcode(
+    input_data: InvitationPasscodeRequest, request: Request
+) -> dict[str, str]:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        invitation = (
+            await session.execute(
+                select(Invitation).where(
+                    Invitation.passcode_hash
+                    == sha256(input_data.passcode.strip().upper().encode()).hexdigest()
+                )
+            )
+        ).scalar_one_or_none()
+        job = await session.get(Job, invitation.job_id) if invitation else None
+        if (
+            invitation is None
+            or job is None
+            or not application_is_open(job)
             or invitation.revoked_at is not None
             or invitation.expires_at <= datetime.now(UTC)
             or invitation.resume_submission_id is not None
@@ -535,6 +619,8 @@ async def upload_resume(
             raise APIError(404, "NOT_FOUND", "Job not found")
         invitation: Invitation | None = None
         if invitation_token:
+            if user.account_type != "candidate":
+                raise APIError(403, "FORBIDDEN", "Candidate account required")
             invitation = (
                 await session.execute(
                     select(Invitation).where(
@@ -542,6 +628,8 @@ async def upload_resume(
                     )
                 )
             ).scalar_one_or_none()
+            if not application_is_open(job):
+                raise APIError(409, "APPLICATIONS_CLOSED", "Job applications are not open")
             if (
                 invitation is None
                 or invitation.job_id != job.id
@@ -823,6 +911,22 @@ async def require_user(request: Request) -> UserRecord:
     if user is None:
         raise APIError(401, "UNAUTHORIZED", "Unauthorized")
     return user
+
+
+async def require_candidate(request: Request) -> UserRecord:
+    user = await require_user(request)
+    if user.account_type != "candidate":
+        raise APIError(403, "FORBIDDEN", "Candidate account required")
+    return user
+
+
+def application_is_open(job: Job) -> bool:
+    now = datetime.now(UTC)
+    return (
+        job.application_opens_at is not None
+        and job.application_closes_at is not None
+        and job.application_opens_at <= now < job.application_closes_at
+    )
 
 
 async def latest_job_version(session: AsyncSession, job_id: str) -> JobVersion:
