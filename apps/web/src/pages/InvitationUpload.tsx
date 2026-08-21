@@ -72,12 +72,7 @@ export const InvitationUpload = () => {
 		setError(null);
 		setIsSubmitting(true);
 		try {
-			await candidateClient.uploadInvitedResume(
-				jobId,
-				token,
-				resume,
-				session.user.name,
-			);
+			await candidateClient.uploadInvitedResume(jobId, token, resume);
 			setSubmitted(true);
 		} catch (reason) {
 			setError(

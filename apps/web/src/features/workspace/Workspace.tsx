@@ -56,9 +56,8 @@ export const Workspace = () => {
 	const [jobTitle, setJobTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [requirements, setRequirements] = useState<Requirement[]>([]);
-	const [candidateName, setCandidateName] = useState("");
-	const [resume, setResume] = useState<File | null>(null);
-	const [processingJobId, setProcessingJobId] = useState<string | null>(null);
+	const [resumes, setResumes] = useState<File[]>([]);
+	const [uploadInputKey, setUploadInputKey] = useState(0);
 	const [invitationToken, setInvitationToken] = useState<string | null>(null);
 	const [copiedInvitation, setCopiedInvitation] = useState(false);
 	const [evaluationQuery, setEvaluationQuery] = useState("");
@@ -140,43 +139,6 @@ export const Workspace = () => {
 				);
 			});
 	}, [organizationId]);
-
-	useEffect(() => {
-		if (!processingJobId) return;
-		const poll = () => {
-			void workspaceClient
-				.processingJob(processingJobId)
-				.then((job) => {
-					if (job.status === "completed") {
-						setNotice("Resume processing completed successfully.");
-						if (selectedJob) {
-							void workspaceClient
-								.evaluations(selectedJob.id)
-								.then(setEvaluations);
-						}
-						setProcessingJobId(null);
-					} else if (job.safeError || job.status === "failed") {
-						setNotice(
-							`Processing issue: ${job.safeError ?? "Failed"}`,
-						);
-						setProcessingJobId(null);
-					} else {
-						setNotice(`Resume evaluation status: ${job.status}...`);
-					}
-				})
-				.catch((reason: unknown) => {
-					setError(
-						reason instanceof Error
-							? reason.message
-							: "Request failed",
-					);
-					setProcessingJobId(null);
-				});
-		};
-		poll();
-		const interval = window.setInterval(poll, 2_500);
-		return () => window.clearInterval(interval);
-	}, [processingJobId, selectedJob]);
 
 	if (isPending) {
 		return (
@@ -290,21 +252,44 @@ export const Workspace = () => {
 
 	const upload = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!selectedJob || !resume) return;
+		if (!selectedJob || resumes.length === 0) return;
 		try {
-			const result = await workspaceClient.uploadResume(
-				selectedJob.id,
-				resume,
-				candidateName,
+			const hasArchive = resumes.some((resume) =>
+				resume.name.toLowerCase().endsWith(".zip"),
 			);
-			setCandidateName("");
-			setResume(null);
-			setProcessingJobId(result.processingJobId);
+			if (hasArchive && resumes.length !== 1) {
+				setError(
+					"Upload one ZIP archive or one or more resume documents.",
+				);
+				return;
+			}
+			const [archive] = resumes;
+			if (!archive) return;
+			const result = hasArchive
+				? await workspaceClient.uploadResumeBatch(
+						selectedJob.id,
+						archive,
+					)
+				: await workspaceClient.uploadResumes(selectedJob.id, resumes);
+			setResumes([]);
+			setUploadInputKey((current) => current + 1);
 			const updatedEvals = await workspaceClient.evaluations(
 				selectedJob.id,
 			);
 			setEvaluations(updatedEvals);
-			setNotice("Resume queued for async extraction and evaluation.");
+			setNotice(
+				`${result.accepted.length} resume${result.accepted.length === 1 ? "" : "s"} queued.${result.rejected.length ? ` ${result.rejected.length} rejected.` : ""}`,
+			);
+			if (result.rejected.length) {
+				setError(
+					result.rejected
+						.map(
+							(rejection) =>
+								`${rejection.name}: ${rejection.reason}`,
+						)
+						.join(" "),
+				);
+			}
 			setActiveTab("results");
 		} catch (reason) {
 			reportError(reason);
@@ -1103,66 +1088,53 @@ export const Workspace = () => {
 										className="space-y-4 p-6 bg-white border border-[var(--rule)] rounded"
 									>
 										<h3 className="font-serif text-lg">
-											Queue Resume Submission
+											Queue resume submissions
 										</h3>
-
-										<div className="space-y-1.5">
-											<Label
-												htmlFor="candidate-name"
-												className="text-xs"
-											>
-												Candidate Name (Optional)
-											</Label>
-											<Input
-												id="candidate-name"
-												value={candidateName}
-												onChange={(e) =>
-													setCandidateName(
-														e.target.value,
-													)
-												}
-												placeholder="e.g. Alex Johnson"
-												className="text-xs"
-											/>
-										</div>
 
 										<div className="space-y-1.5">
 											<Label
 												htmlFor="resume-file"
 												className="text-xs"
 											>
-												Resume Document (PDF, DOCX, TXT)
+												Resume documents or ZIP archive
 											</Label>
 											<Input
 												id="resume-file"
+												key={uploadInputKey}
 												type="file"
-												accept=".pdf,.docx,.txt"
-												onChange={(e) =>
-													setResume(
-														e.currentTarget
-															.files?.[0] ?? null,
+												accept=".pdf,.docx,.txt,.zip"
+												multiple
+												onChange={(event) =>
+													setResumes(
+														Array.from(
+															event.currentTarget
+																.files ?? [],
+														),
 													)
 												}
 												required
 												className="text-xs file:font-mono file:text-xs"
 											/>
 											<p className="text-[11px] font-mono text-[var(--muted)]">
-												Accepted digital documents up to
-												20MB. Scanned or image PDFs are
-												rejected.
+												Choose multiple PDF, DOCX, or
+												TXT resumes, or one ZIP archive.
+												Names are extracted from
+												resumes.
 											</p>
 										</div>
 
 										<Button
 											type="submit"
 											disabled={
-												!resume ||
+												resumes.length === 0 ||
 												!selectedJob.confirmed
 											}
 											className="w-full bg-[var(--ink)] text-[var(--bone)] hover:bg-[var(--accent)] font-mono text-xs"
 										>
 											<UploadCloud className="size-3.5 mr-1" />{" "}
-											Queue for Evaluation
+											Queue {resumes.length || "selected"}{" "}
+											resume
+											{resumes.length === 1 ? "" : "s"}
 										</Button>
 									</form>
 								</div>

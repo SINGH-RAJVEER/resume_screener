@@ -99,19 +99,47 @@ export const workspaceClient = {
 				})),
 			}),
 		}),
-	uploadResume: (jobId: string, file: File, candidateName: string) => {
+	uploadResume: (jobId: string, file: File) => {
 		const body = new FormData();
 		body.append("file", file);
-		body.append("candidate_name", candidateName);
 		return request<{ processingJobId: string; submissionId: string }>(
 			`/api/jobs/${jobId}/resumes`,
 			{ method: "POST", body },
 		);
 	},
-	processingJob: (processingJobId: string) =>
-		request<{ id: string; status: string; safeError: string | null }>(
-			`/api/processing-jobs/${processingJobId}`,
-		),
+	uploadResumes: async (jobId: string, files: File[]) => {
+		const results = await Promise.allSettled(
+			files.map((file) => workspaceClient.uploadResume(jobId, file)),
+		);
+		return {
+			accepted: results.flatMap((result, index) =>
+				result.status === "fulfilled"
+					? [{ name: files[index]?.name ?? "resume" }]
+					: [],
+			),
+			rejected: results.flatMap((result, index) =>
+				result.status === "rejected"
+					? [
+							{
+								name: files[index]?.name ?? "resume",
+								reason:
+									result.reason instanceof Error
+										? result.reason.message
+										: "Upload failed",
+							},
+						]
+					: [],
+			),
+		};
+	},
+	uploadResumeBatch: (jobId: string, archive: File) => {
+		const body = new FormData();
+		body.append("archive", archive);
+		return request<{
+			accepted: Array<{ name: string }>;
+			rejected: Array<{ name: string; reason: string }>;
+		}>(`/api/jobs/${jobId}/resume-batches`, { method: "POST", body });
+	},
 	createInvitation: (jobId: string) =>
 		request<{ id: string; token: string; expiresAt: string }>(
 			`/api/jobs/${jobId}/invitations`,

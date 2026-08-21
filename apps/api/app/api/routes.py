@@ -604,7 +604,6 @@ async def upload_resume(
     job_id: str,
     request: Request,
     file: UploadFile = File(),
-    candidate_name: str = Form(""),
     invitation_token: str = Form(""),
 ) -> dict[str, str]:
     user = await require_user(request)
@@ -658,7 +657,6 @@ async def upload_resume(
             id=new_id(),
             organization_id=job.organization_id,
             user_id=user.id if invitation is not None else None,
-            full_name=candidate_name or None,
         )
         document = ResumeDocument(
             id=new_id(),

@@ -45,15 +45,9 @@ export const candidateClient = {
 				body: JSON.stringify({ passcode }),
 			},
 		),
-	uploadInvitedResume: (
-		jobId: string,
-		token: string,
-		file: File,
-		candidateName: string,
-	) => {
+	uploadInvitedResume: (jobId: string, token: string, file: File) => {
 		const body = new FormData();
 		body.append("file", file);
-		body.append("candidate_name", candidateName);
 		body.append("invitation_token", token);
 		return request<{ processingJobId: string; submissionId: string }>(
 			`/api/jobs/${jobId}/resumes`,
