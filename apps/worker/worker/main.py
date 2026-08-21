@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
+from .evaluator import evaluate
 from .normalizer import normalize_resume
 from .parser import DocumentParseError, extract_blocks
 
@@ -181,11 +182,68 @@ class Worker:
 
 	async def _prepare_evaluation(self, job: ClaimedJob) -> None:
 		async with self._engine.begin() as connection:
+			result = await connection.execute(
+				text(
+					"""
+					SELECT evaluation.resume_version_id, version.normalized_facts
+					FROM evaluation
+					JOIN resume_version AS version ON version.id = evaluation.resume_version_id
+					WHERE evaluation.id = :evaluation_id
+					"""
+				),
+				{"evaluation_id": job.payload_reference},
+			)
+			evaluation = result.mappings().one_or_none()
+			if evaluation is None:
+				raise NonRetryableJobError("Evaluation not found")
+			requirements = await connection.execute(
+				text(
+					"""
+					SELECT requirement.id, requirement.kind, requirement.weight,
+						requirement.normalized_text
+					FROM evaluation
+					JOIN job_requirement AS requirement
+						ON requirement.job_version_id = evaluation.job_version_id
+					WHERE evaluation.id = :evaluation_id
+					"""
+				),
+				{"evaluation_id": job.payload_reference},
+			)
+			outcome = evaluate(
+				dict(evaluation["normalized_facts"] or {}),
+				[dict(requirement) for requirement in requirements.mappings().all()],
+			)
+			for assessment in outcome.assessments:
+				await connection.execute(
+					text(
+						"""
+						INSERT INTO requirement_assessment (
+							id, evaluation_id, job_requirement_id, outcome, confidence,
+							reasoning, evidence, created_at
+						) VALUES (
+							:id, :evaluation_id, :job_requirement_id, :outcome,
+							:confidence, :reasoning,
+							CAST(:evidence AS jsonb), now()
+						)
+						ON CONFLICT (evaluation_id, job_requirement_id) DO NOTHING
+						"""
+					),
+					{
+						"id": secrets.token_urlsafe(18),
+						"evaluation_id": job.payload_reference,
+						"job_requirement_id": assessment.requirement_id,
+						"outcome": assessment.outcome,
+						"confidence": assessment.confidence,
+						"reasoning": assessment.reasoning,
+						"evidence": json.dumps(assessment.evidence),
+					},
+				)
 			await connection.execute(
 				text(
 					"""
 					UPDATE evaluation
-					SET status = 'ready_for_review', quality_state = 'ready', completed_at = now()
+					SET status = 'complete', score = :score, evidence_coverage = :coverage,
+						eligibility = :eligibility, quality_state = 'ready', completed_at = now()
 					WHERE id = :evaluation_id
 						AND EXISTS (
 							SELECT 1 FROM processing_job
@@ -198,6 +256,9 @@ class Worker:
 					"evaluation_id": job.payload_reference,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
+					"score": outcome.score,
+					"coverage": outcome.evidence_coverage,
+					"eligibility": outcome.eligibility,
 				},
 			)
 
