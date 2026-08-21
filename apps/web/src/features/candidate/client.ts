@@ -22,6 +22,14 @@ export const candidateClient = {
 			`/api/invitations/${token}/redeem`,
 			{ method: "POST" },
 		),
+	redeemPasscode: (passcode: string) =>
+		request<{ jobId: string; invitationId: string }>(
+			"/api/invitations/redeem",
+			{
+				method: "POST",
+				body: JSON.stringify({ passcode }),
+			},
+		),
 	uploadInvitedResume: (
 		jobId: string,
 		token: string,

@@ -43,7 +43,9 @@ export const CandidateHome = () => {
 		setError(null);
 		setIsWorking(true);
 		try {
-			const result = await candidateClient.redeemInvitation(token);
+			const result = /^[A-Za-z0-9]{8}$/.test(token)
+				? await candidateClient.redeemPasscode(token)
+				: await candidateClient.redeemInvitation(token);
 			setActiveToken(token);
 			setJobId(result.jobId);
 		} catch (reason) {
@@ -167,7 +169,7 @@ export const CandidateHome = () => {
 							<form className="candidate-form" onSubmit={redeem}>
 								<div className="form-field">
 									<Label htmlFor="invitation">
-										Invitation link or token
+										Invitation link or passcode
 									</Label>
 									<Input
 										id="invitation"
@@ -176,7 +178,7 @@ export const CandidateHome = () => {
 												event.currentTarget.value,
 											)
 										}
-										placeholder="Paste the invitation you received"
+										placeholder="Paste a link or enter an 8-character passcode"
 										required
 										value={invitationValue}
 									/>

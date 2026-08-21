@@ -628,6 +628,15 @@ async def upload_resume(
                     )
                 )
             ).scalar_one_or_none()
+            if invitation is None:
+                invitation = (
+                    await session.execute(
+                        select(Invitation).where(
+                            Invitation.passcode_hash
+                            == sha256(invitation_token.strip().upper().encode()).hexdigest()
+                        )
+                    )
+                ).scalar_one_or_none()
             if not application_is_open(job):
                 raise APIError(409, "APPLICATIONS_CLOSED", "Job applications are not open")
             if (
