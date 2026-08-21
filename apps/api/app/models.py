@@ -4,6 +4,7 @@ from sqlalchemy import (
 	Boolean,
 	CheckConstraint,
 	DateTime,
+	Float,
 	ForeignKey,
 	ForeignKeyConstraint,
 	Integer,
@@ -295,5 +296,71 @@ class ProcessingJob(Base):
 		DateTime(timezone=True), nullable=False, server_default=func.now()
 	)
 	updated_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
+class Evaluation(Base):
+	__tablename__ = "evaluation"
+	__table_args__ = (
+		CheckConstraint(
+			"eligibility IN ('pending', 'eligible', 'needs_review', 'not_eligible')",
+			name="ck_evaluation_eligibility",
+		),
+		UniqueConstraint(
+			"resume_submission_id", "job_version_id", name="uq_evaluation_submission_job_version"
+		),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	resume_submission_id: Mapped[str] = mapped_column(
+		ForeignKey("resume_submission.id", ondelete="CASCADE"), nullable=False
+	)
+	job_version_id: Mapped[str] = mapped_column(
+		ForeignKey("job_version.id", ondelete="RESTRICT"), nullable=False
+	)
+	resume_version_id: Mapped[str] = mapped_column(
+		ForeignKey("resume_version.id", ondelete="RESTRICT"), nullable=False
+	)
+	status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+	score: Mapped[int | None] = mapped_column(Integer)
+	evidence_coverage: Mapped[int | None] = mapped_column(Integer)
+	eligibility: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text("'pending'")
+	)
+	quality_state: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text("'pending'")
+	)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RequirementAssessment(Base):
+	__tablename__ = "requirement_assessment"
+	__table_args__ = (
+		CheckConstraint(
+			"outcome IN ('met', 'partial', 'not_met', 'unknown')", name="ck_assessment_outcome"
+		),
+		UniqueConstraint(
+			"evaluation_id", "job_requirement_id", name="uq_assessment_evaluation_requirement"
+		),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	evaluation_id: Mapped[str] = mapped_column(
+		ForeignKey("evaluation.id", ondelete="CASCADE"), nullable=False
+	)
+	job_requirement_id: Mapped[str] = mapped_column(
+		ForeignKey("job_requirement.id", ondelete="RESTRICT"), nullable=False
+	)
+	outcome: Mapped[str] = mapped_column(Text, nullable=False)
+	confidence: Mapped[float] = mapped_column(Float, nullable=False)
+	reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+	evidence: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+	deterministic_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+	semantic_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+	created_at: Mapped[datetime] = mapped_column(
 		DateTime(timezone=True), nullable=False, server_default=func.now()
 	)

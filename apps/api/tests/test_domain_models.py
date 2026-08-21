@@ -15,6 +15,8 @@ def test_core_domain_tables_are_registered() -> None:
 		"job_requirement",
 		"resume_submission",
 		"processing_job",
+		"evaluation",
+		"requirement_assessment",
 	} <= set(Base.metadata.tables)
 
 
