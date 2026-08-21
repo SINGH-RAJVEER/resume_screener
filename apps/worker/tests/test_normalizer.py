@@ -39,3 +39,17 @@ def test_extracts_candidate_contact_facts() -> None:
 		"email": "ada@example.com",
 		"location": "Pune, India",
 	}
+
+
+def test_extracts_contact_from_single_document_block() -> None:
+	# The parser emits TXT/DOCX resumes as one block holding the whole text.
+	document = (
+		"Ada Lovelace\nada@example.com\nLocation: Pune, India\n\nExperience\nBuilt APIs."
+	)
+	facts = normalize_resume([{"id": "p1-b1", "page": 1, "text": document}])
+
+	assert facts["contact"] == {
+		"name": "Ada Lovelace",
+		"email": "ada@example.com",
+		"location": "Pune, India",
+	}
