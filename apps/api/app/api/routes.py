@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from io import StringIO
 from pathlib import Path
 from secrets import token_urlsafe
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from sqlalchemy import func, select
@@ -718,7 +721,13 @@ async def processing_job_status(processing_job_id: str, request: Request) -> dic
 
 
 @router.get("/api/jobs/{job_id}/evaluations")
-async def list_evaluations(job_id: str, request: Request) -> list[dict[str, object]]:
+async def list_evaluations(
+    job_id: str,
+    request: Request,
+    eligibility: list[str] | None = Query(default=None),
+    minimum_score: int | None = Query(default=None, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, object]]:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions()() as session:
@@ -726,13 +735,18 @@ async def list_evaluations(job_id: str, request: Request) -> list[dict[str, obje
         if job is None:
             raise APIError(404, "NOT_FOUND", "Job not found")
         await require_membership(session, job.organization_id, user.id)
-        rows = await session.execute(
+        statement = (
             select(Evaluation, CandidateRecord)
             .join(ResumeSubmission, ResumeSubmission.id == Evaluation.resume_submission_id)
             .join(CandidateRecord, CandidateRecord.id == ResumeSubmission.candidate_record_id)
             .where(ResumeSubmission.job_id == job.id)
             .order_by(Evaluation.score.desc().nullslast(), Evaluation.created_at.desc())
         )
+        if eligibility:
+            statement = statement.where(Evaluation.eligibility.in_(eligibility))
+        if minimum_score is not None:
+            statement = statement.where(Evaluation.score >= minimum_score)
+        rows = await session.execute(statement.limit(limit))
         result: list[dict[str, object]] = []
         for evaluation, candidate in rows:
             assessments = (
@@ -762,6 +776,46 @@ async def list_evaluations(job_id: str, request: Request) -> list[dict[str, obje
                 }
             )
         return result
+
+
+@router.get("/api/jobs/{job_id}/evaluations.csv")
+async def export_evaluations_csv(job_id: str, request: Request) -> Response:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise APIError(404, "NOT_FOUND", "Job not found")
+        await require_membership(session, job.organization_id, user.id)
+        rows = await session.execute(
+            select(Evaluation, CandidateRecord)
+            .join(ResumeSubmission, ResumeSubmission.id == Evaluation.resume_submission_id)
+            .join(CandidateRecord, CandidateRecord.id == ResumeSubmission.candidate_record_id)
+            .where(ResumeSubmission.job_id == job.id)
+            .order_by(Evaluation.score.desc().nullslast(), Evaluation.created_at.desc())
+        )
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["candidate_name", "status", "score", "eligibility", "evidence_coverage"])
+        for evaluation, candidate in rows:
+            writer.writerow(
+                [
+                    candidate.full_name or "",
+                    evaluation.status,
+                    evaluation.score if evaluation.score is not None else "",
+                    evaluation.eligibility,
+                    (
+                        evaluation.evidence_coverage
+                        if evaluation.evidence_coverage is not None
+                        else ""
+                    ),
+                ]
+            )
+    return Response(
+        output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}-evaluations.csv"'},
+    )
 
 
 async def require_user(request: Request) -> UserRecord:
