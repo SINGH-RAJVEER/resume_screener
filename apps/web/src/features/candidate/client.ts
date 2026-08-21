@@ -67,6 +67,6 @@ export type IndependentEvaluation = {
 	jobDescriptionProvided?: boolean;
 	suggestions?: Array<{ title: string; detail: string }>;
 	facts?: {
-		skills?: Array<{ canonicalName: string }>;
+		skills?: Array<{ canonicalName: string; category?: string | null }>;
 	};
 };

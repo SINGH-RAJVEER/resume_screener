@@ -218,6 +218,17 @@ export const CandidateHome = () => {
 	);
 };
 
+const groupByCategory = (
+	skills: Array<{ canonicalName: string; category?: string | null }>,
+): Array<[string, string[]]> => {
+	const grouped = new Map<string, string[]>();
+	for (const skill of skills) {
+		const category = skill.category ?? "Other";
+		grouped.set(category, [...(grouped.get(category) ?? []), skill.canonicalName]);
+	}
+	return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+};
+
 const PrivateReport = ({
 	evaluation,
 	onClose,
@@ -249,12 +260,14 @@ const PrivateReport = ({
 				recognizable skills. It does not infer missing experience.
 			</p>
 			{evaluation.facts?.skills?.length ? (
-				<p>
-					Recognized skills:{" "}
-					{evaluation.facts.skills
-						.map((skill) => skill.canonicalName)
-						.join(", ")}
-				</p>
+				<div className="recognized-skills">
+					<h4>Recognized skills</h4>
+					{groupByCategory(evaluation.facts.skills).map(([category, names]) => (
+						<p key={category}>
+							<strong>{category}</strong> {names.join(", ")}
+						</p>
+					))}
+				</div>
 			) : null}
 			{evaluation.suggestions?.map((suggestion) => (
 				<p key={suggestion.title}>

@@ -383,6 +383,24 @@ p {
 }
 
 /* Keep the existing employer workflow functional while removing visual decoration. */
+.recognized-skills {
+	margin-top: 1rem;
+}
+.recognized-skills h4 {
+	font-size: 0.8125rem;
+	margin-bottom: 0.5rem;
+}
+.recognized-skills p {
+	font-size: 0.75rem;
+	margin-bottom: 0.35rem;
+}
+.recognized-skills strong {
+	display: inline-block;
+	font-weight: 600;
+	margin-right: 0.4rem;
+}
+
+/* Keep the existing employer workflow functional while removing visual decoration. */
 .workspace-shell,
 .workspace-shell * {
 	font-family: Arial, Helvetica, sans-serif;
