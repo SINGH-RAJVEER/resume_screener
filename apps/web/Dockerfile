@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM oven/bun:1-alpine AS builder
 WORKDIR /app
 
@@ -5,7 +6,8 @@ COPY package.json bun.lock* ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY libs/ui/package.json ./libs/ui/
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+	bun install --frozen-lockfile
 
 COPY tsconfig.base.json ./
 COPY libs/ui ./libs/ui
