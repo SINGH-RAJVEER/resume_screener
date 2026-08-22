@@ -224,7 +224,10 @@ const groupByCategory = (
 	const grouped = new Map<string, string[]>();
 	for (const skill of skills) {
 		const category = skill.category ?? "Other";
-		grouped.set(category, [...(grouped.get(category) ?? []), skill.canonicalName]);
+		grouped.set(category, [
+			...(grouped.get(category) ?? []),
+			skill.canonicalName,
+		]);
 	}
 	return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
 };
@@ -262,11 +265,13 @@ const PrivateReport = ({
 			{evaluation.facts?.skills?.length ? (
 				<div className="recognized-skills">
 					<h4>Recognized skills</h4>
-					{groupByCategory(evaluation.facts.skills).map(([category, names]) => (
-						<p key={category}>
-							<strong>{category}</strong> {names.join(", ")}
-						</p>
-					))}
+					{groupByCategory(evaluation.facts.skills).map(
+						([category, names]) => (
+							<p key={category}>
+								<strong>{category}</strong> {names.join(", ")}
+							</p>
+						),
+					)}
 				</div>
 			) : null}
 			{evaluation.suggestions?.map((suggestion) => (
