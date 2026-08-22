@@ -28,6 +28,13 @@ def test_does_not_match_partial_words() -> None:
 	assert "Python" not in found
 
 
+def test_absorbed_phrases_do_not_become_skills() -> None:
+	found = mentioned_skills("B.Tech Computer Science, VJTI Mumbai, 2018.")
+
+	# "Science" is a cross-domain element but education mentions are absorbed.
+	assert found == set()
+
+
 def test_corpus_aliases_target_known_skills() -> None:
 	vocabulary = load_vocabulary()
 	known = {name.casefold() for name in vocabulary.categories}

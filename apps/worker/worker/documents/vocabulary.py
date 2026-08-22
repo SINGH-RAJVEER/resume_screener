@@ -16,9 +16,15 @@ MAX_PHRASE_TOKENS = 6
 
 
 class SkillVocabulary:
-	def __init__(self, phrases: dict[str, str], categories: dict[str, str | None]) -> None:
+	def __init__(
+		self,
+		phrases: dict[str, str],
+		categories: dict[str, str | None],
+		absorbers: frozenset[str],
+	) -> None:
 		self.phrase_to_canonical = phrases
 		self.categories = categories
+		self.absorbers = absorbers
 		self.max_tokens = min(
 			max(len(phrase.split()) for phrase in phrases),
 			MAX_PHRASE_TOKENS,
@@ -40,6 +46,10 @@ class SkillVocabulary:
 						spans.append(phrase)
 					match_count = count
 					break
+				if phrase in self.absorbers:
+					# Consumed without emitting: credential context, not a skill.
+					match_count = count
+					break
 			index += match_count or 1
 		return found
 
@@ -52,6 +62,8 @@ def load_vocabulary() -> SkillVocabulary:
 	corpus = cast(dict[str, object], json.loads(CORPUS_PATH.read_text()))
 	raw_skills = cast(list[dict[str, object]], corpus["skills"])
 	raw_aliases = cast(dict[str, str], corpus["aliases"])
+	raw_absorbers = cast(list[str], corpus.get("absorbers", []))
+	absorbers = frozenset(absorber.casefold() for absorber in raw_absorbers)
 	categories: dict[str, str | None] = {}
 	phrases: dict[str, str] = {}
 	for skill in raw_skills:
@@ -64,7 +76,7 @@ def load_vocabulary() -> SkillVocabulary:
 		if canonical.casefold() not in categories:
 			raise ValueError(f"Alias {alias!r} targets unknown skill {canonical!r}")
 		phrases[alias.casefold()] = canonical
-	return SkillVocabulary(phrases, categories)
+	return SkillVocabulary(phrases, categories, absorbers)
 
 
 def mentioned_skills(text: str) -> set[str]:

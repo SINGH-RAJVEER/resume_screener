@@ -26,6 +26,9 @@ CURATED = [
 	("Machine Learning", "Data science", ["ml"]),
 	("Deep Learning", "Data science", []),
 	("Artificial Intelligence", "Data science", ["ai"]),
+	# Modern tools absent from O*NET 30.0.
+	("Snowflake", "Data warehousing", ["snowflake db"]),
+	("dbt", "Data engineering", []),
 	("PostgreSQL", None, ["postgres"]),
 	("Kubernetes", None, ["k8s"]),
 	("JavaScript", None, ["js"]),
@@ -34,6 +37,7 @@ CURATED = [
 	# O*NET stores some tools under vendor-prefixed names; resumes rarely do.
 	("Apache Kafka", None, ["kafka"]),
 	("IBM Terraform", None, ["terraform"]),
+	("Apache Airflow", None, ["airflow"]),
 	("Communication", "General competencies", ["communication skills"]),
 	("Teamwork", "General competencies", ["team collaboration"]),
 	("Leadership", "General competencies", ["people management"]),
@@ -43,6 +47,11 @@ CURATED = [
 
 MIN_NAME_LENGTH = 2
 MAX_PHRASE_TOKENS = 6
+
+# Phrases that consume tokens during matching but are not skills: they absorb
+# education and credential mentions before shorter cross-domain elements
+# (e.g. Science) match inside them.
+ABSORBERS = ["Computer Science"]
 
 
 def read_onet_tech_skills(path: Path) -> list[tuple[str, str]]:
@@ -105,6 +114,7 @@ def build(onet_dir: Path, esco_path: Path | None) -> dict:
 		],
 		"skills": [skills[key] for key in sorted(skills)],
 		"aliases": {alias: aliases[alias] for alias in sorted(aliases)},
+		"absorbers": [absorber.casefold() for absorber in ABSORBERS],
 	}
 
 
