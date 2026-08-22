@@ -7,6 +7,7 @@ import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import cast
 
 from sqlalchemy import text
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from .config import WorkerSettings, load_settings
 from .documents.normalizer import normalize_resume
 from .documents.parser import DocumentParseError, extract_blocks
+from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
 from .extraction.extractor import (
@@ -292,6 +294,14 @@ class Worker:
 		score: int,
 		suggestions: list[dict[str, object]],
 	) -> None:
+		improved_key = f"independent-resumes/improved/{evaluation_id}.docx"
+		try:
+			document = render_resume_docx(facts, cast(list[Mapping[str, object]], suggestions))
+		except Exception:
+			logger.exception("corrected resume rendering failed", extra={"job_id": job.id})
+			improved_key = None
+		else:
+			self._write_object(improved_key, document)
 		async with self._engine.begin() as connection:
 			await connection.execute(
 				text(
@@ -300,6 +310,8 @@ class Worker:
 					SET status = 'complete', score = :score,
 						suggestions = CAST(:suggestions AS jsonb),
 						normalized_facts = CAST(:normalized_facts AS jsonb),
+						improved_resume_key = :improved_key,
+						improved_resume_unlocked_at = now(),
 						safe_error = NULL, completed_at = now()
 					WHERE id = :evaluation_id
 						AND EXISTS (
@@ -316,15 +328,27 @@ class Worker:
 					"score": score,
 					"suggestions": json.dumps(suggestions),
 					"normalized_facts": json.dumps(dict(facts)),
+					"improved_key": improved_key,
 				},
 			)
 
 	def _read_object(self, key: str) -> bytes:
-		root = self._settings.storage_root.resolve()
-		path = (root / key).resolve()
-		if root not in path.parents or not path.is_file():
+		path = self._object_path(key)
+		if not path.is_file():
 			raise NonRetryableJobError("Resume source document is unavailable")
 		return path.read_bytes()
+
+	def _write_object(self, key: str, content: bytes) -> None:
+		path = self._object_path(key)
+		path.parent.mkdir(parents=True, exist_ok=True)
+		path.write_bytes(content)
+
+	def _object_path(self, key: str) -> Path:
+		root = self._settings.storage_root.resolve()
+		path = (root / key).resolve()
+		if root not in path.parents:
+			raise NonRetryableJobError("Storage key escapes the configured root")
+		return path
 
 	async def _prepare_evaluation(self, job: ClaimedJob) -> None:
 		async with self._engine.begin() as connection:
