@@ -5,6 +5,7 @@ requires-python = ">=3.14"
 dependencies = [
 	"asyncpg>=0.30.0",
 	"httpx>=0.28.1",
+	"pydantic>=2.13.4",
 	"pypdf>=6.16.1",
 	"sqlalchemy[asyncio]>=2.0.42",
 ]

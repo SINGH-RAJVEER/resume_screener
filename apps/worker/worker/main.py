@@ -7,6 +7,7 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -16,6 +17,8 @@ from .documents.normalizer import normalize_resume
 from .documents.parser import DocumentParseError, extract_blocks
 from .evaluations.evaluator import evaluate
 from .evaluations.independent import independent_report
+from .extraction.extractor import extract_resume_facts, merge_facts, merge_suggestions
+from .providers.openrouter import OpenRouterClient, OpenRouterError
 
 logger = logging.getLogger("resume-screener.worker")
 
@@ -38,6 +41,15 @@ class Worker:
 	def __init__(self, engine: AsyncEngine, settings: WorkerSettings) -> None:
 		self._engine = engine
 		self._settings = settings
+		self._openrouter = (
+			OpenRouterClient(
+				api_key=settings.openrouter.api_key or "",
+				base_url=settings.openrouter.base_url,
+				timeout_seconds=settings.openrouter.timeout_seconds,
+			)
+			if settings.llm_enabled
+			else None
+		)
 
 	async def run(self) -> None:
 		while True:
@@ -207,7 +219,7 @@ class Worker:
 					UPDATE independent_evaluation
 					SET status = 'processing', safe_error = NULL
 					WHERE id = :evaluation_id
-					RETURNING storage_key, media_type, job_description
+					RETURNING storage_key, media_type, original_name, job_description
 					"""
 				),
 				{"evaluation_id": job.payload_reference},
@@ -220,11 +232,61 @@ class Worker:
 			blocks = extract_blocks(content, str(evaluation["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
-		normalized_facts = normalize_resume(blocks["blocks"])
-		score, suggestions = independent_report(
-			normalized_facts,
-			str(evaluation["job_description"]) if evaluation["job_description"] else None,
+		block_list = blocks["blocks"]
+		normalized_facts = normalize_resume(block_list)
+		job_description = (
+			str(evaluation["job_description"]) if evaluation["job_description"] else None
 		)
+		if self._openrouter is not None:
+			try:
+				extracted = await extract_resume_facts(
+					self._openrouter,
+					model=self._settings.openrouter.extraction_model,
+					blocks=block_list,
+					max_output_tokens=self._settings.openrouter.max_output_tokens,
+					document=(
+						str(evaluation["original_name"]),
+						content,
+						str(evaluation["media_type"]),
+					),
+				)
+			except OpenRouterError as error:
+				logger.warning(
+					"model extraction failed; using deterministic facts",
+					extra={"job_id": job.id, "reason": str(error)},
+				)
+			else:
+				facts = merge_facts(normalized_facts, extracted, block_list)
+				score, suggestions = independent_report(facts, job_description)
+				extra_suggestions = cast(
+					list[dict[str, object]], extracted.get("suggestions") or []
+				)
+				await self._store_independent_report(
+					job,
+					evaluation_id=job.payload_reference,
+					facts=facts,
+					score=score,
+					suggestions=merge_suggestions(suggestions, extra_suggestions),
+				)
+				return
+		score, suggestions = independent_report(normalized_facts, job_description)
+		await self._store_independent_report(
+			job,
+			evaluation_id=job.payload_reference,
+			facts=normalized_facts,
+			score=score,
+			suggestions=suggestions,
+		)
+
+	async def _store_independent_report(
+		self,
+		job: ClaimedJob,
+		*,
+		evaluation_id: str,
+		facts: Mapping[str, object],
+		score: int,
+		suggestions: list[dict[str, object]],
+	) -> None:
 		async with self._engine.begin() as connection:
 			await connection.execute(
 				text(
@@ -243,12 +305,12 @@ class Worker:
 					"""
 				),
 				{
-					"evaluation_id": job.payload_reference,
+					"evaluation_id": evaluation_id,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
 					"score": score,
 					"suggestions": json.dumps(suggestions),
-					"normalized_facts": json.dumps(normalized_facts),
+					"normalized_facts": json.dumps(dict(facts)),
 				},
 			)
 

@@ -21,5 +21,30 @@ def test_independent_report_scores_documented_basics() -> None:
 		None,
 	)
 
-	assert score == 68
-	assert suggestions == []
+	assert score == 55
+	assert {item["title"] for item in suggestions} == {
+		"Document your experience",
+		"Add education or certifications",
+	}
+
+
+def test_independent_report_scores_complete_merged_facts() -> None:
+	score, _ = independent_report(
+		{
+			"contact": {
+				"name": "Ada",
+				"email": "ada@example.com",
+				"location": "Pune",
+			},
+			"skills": [
+				{"canonicalName": "Python", "evidenceBlockIds": ["block-1"]},
+				{"canonicalName": "PostgreSQL", "evidenceBlockIds": ["block-2"]},
+			],
+			"employment": [{"employer": "Example", "title": "Engineer"}],
+			"education": [{"degree": "B.Tech"}],
+			"certifications": [],
+		},
+		None,
+	)
+
+	assert score == 78
