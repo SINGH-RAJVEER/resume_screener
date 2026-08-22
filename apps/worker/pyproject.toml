@@ -1,9 +1,10 @@
 [project]
 name = "resume-screener-worker"
 version = "0.0.1"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
 	"asyncpg>=0.30.0",
+	"httpx>=0.28.1",
 	"pypdf>=6.16.1",
 	"sqlalchemy[asyncio]>=2.0.42",
 ]
@@ -19,11 +20,11 @@ dev = [
 [tool.pyright]
 include = ["worker", "tests"]
 typeCheckingMode = "strict"
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
