@@ -56,6 +56,9 @@ services:
             STORAGE_ROOT: /var/resume-storage
             WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
             WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+            OPENROUTER_EXTRACTION_MODEL: ${OPENROUTER_EXTRACTION_MODEL:-}
+            OPENROUTER_ASSESSMENT_MODEL: ${OPENROUTER_ASSESSMENT_MODEL:-}
         volumes:
             - resume_storage:/var/resume-storage:ro
         deploy:
