@@ -97,7 +97,7 @@ export OPENROUTER_API_KEY="sk-or-..."   # optional
 ```sh
 cd apps/api
 uv sync
-uv run alembic upgrade head
+uv run python migrate.py upgrade head   # alembic, with a Python 3.14 fix applied
 bun dev        # uvicorn on :8000 with reload
 ```
 

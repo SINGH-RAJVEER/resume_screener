@@ -18,6 +18,7 @@ WORKDIR /app
 
 COPY --from=builder /app/.venv ./.venv
 COPY --chown=app:app apps/api/app ./app
+COPY --chown=app:app apps/api/migrate.py ./migrate.py
 COPY --chown=app:app apps/api/alembic ./alembic
 COPY --chown=app:app apps/api/alembic.ini ./alembic.ini
 
@@ -28,4 +29,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python migrate.py upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
