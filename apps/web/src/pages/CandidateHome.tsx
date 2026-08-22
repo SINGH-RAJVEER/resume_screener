@@ -2,13 +2,24 @@ import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
 import { Textarea } from "@resume-screener/ui/components/textarea";
-import { FileSearch } from "lucide-react";
+import { FileDown, FileSearch, LoaderCircle } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import {
 	candidateClient,
+	type EmploymentFact,
 	type IndependentEvaluation,
 } from "../features/candidate/client";
 import { authClient } from "../lib/auth-client";
+
+const PROCESSING_STEPS = [
+	"Reading your document",
+	"Recognizing documented skills",
+	"Checking contact details and sections",
+	"Preparing suggestions",
+];
+
+const isPendingStatus = (status: IndependentEvaluation["status"]) =>
+	status === "queued" || status === "processing";
 
 export const CandidateHome = () => {
 	const { data: session } = authClient.useSession();
@@ -35,18 +46,19 @@ export const CandidateHome = () => {
 	}, [loadPrivateHistory]);
 
 	useEffect(() => {
-		if (
-			!privateEvaluation ||
-			["complete", "failed"].includes(privateEvaluation.status)
-		)
+		if (!privateEvaluation || !isPendingStatus(privateEvaluation.status))
 			return;
 		const interval = window.setInterval(async () => {
-			const result = await candidateClient.independentEvaluation(
-				privateEvaluation.id,
-			);
-			setPrivateEvaluation(result);
-			if (["complete", "failed"].includes(result.status))
-				void loadPrivateHistory();
+			try {
+				const result = await candidateClient.independentEvaluation(
+					privateEvaluation.id,
+				);
+				setPrivateEvaluation(result);
+				if (!isPendingStatus(result.status)) void loadPrivateHistory();
+			} catch {
+				setPrivateEvaluation(null);
+				setError("Your report could not be loaded. Try again.");
+			}
 		}, 2_000);
 		return () => window.clearInterval(interval);
 	}, [loadPrivateHistory, privateEvaluation]);
@@ -73,6 +85,7 @@ export const CandidateHome = () => {
 				completedAt: null,
 			});
 			setPrivateResume(null);
+			setJobDescription("");
 		} catch (reason) {
 			setError(
 				reason instanceof Error
@@ -86,6 +99,7 @@ export const CandidateHome = () => {
 
 	const openPrivateEvaluation = async (evaluationId: string) => {
 		setError(null);
+		setPrivateEvaluation(null);
 		try {
 			setPrivateEvaluation(
 				await candidateClient.independentEvaluation(evaluationId),
@@ -145,76 +159,120 @@ export const CandidateHome = () => {
 								onClose={() => setPrivateEvaluation(null)}
 							/>
 						) : (
-							<form
-								className="candidate-form"
-								onSubmit={startPrivateEvaluation}
-							>
-								<div className="form-field">
-									<Label htmlFor="private-resume">
-										Resume document
-									</Label>
-									<Input
-										accept=".pdf,.docx,.txt"
-										id="private-resume"
-										onChange={(event) =>
-											setPrivateResume(
-												event.currentTarget
-													.files?.[0] ?? null,
-											)
-										}
-										required
-										type="file"
-									/>
-								</div>
-								<div className="form-field">
-									<Label htmlFor="job-description">
-										Job description (optional)
-									</Label>
-									<Textarea
-										id="job-description"
-										onChange={(event) =>
-											setJobDescription(
-												event.currentTarget.value,
-											)
-										}
-										placeholder="Paste a role description to receive role-specific guidance."
-										value={jobDescription}
-									/>
-								</div>
-								<Button
-									disabled={!privateResume || isWorking}
-									type="submit"
+							<>
+								<form
+									className="candidate-form"
+									onSubmit={startPrivateEvaluation}
 								>
-									<FileSearch />
-									{isWorking ? "Starting..." : "Check resume"}
-								</Button>
-							</form>
-						)}
-						{error && <p className="form-error">{error}</p>}
-						{privateHistory.length > 0 && !privateEvaluation && (
-							<div className="private-history">
-								<h3>Previous checks</h3>
-								{privateHistory.map((evaluation) => (
+									<div className="form-field">
+										<Label htmlFor="private-resume">
+											Resume document
+										</Label>
+										<Input
+											accept=".pdf,.docx,.txt"
+											id="private-resume"
+											onChange={(event) =>
+												setPrivateResume(
+													event.currentTarget
+														.files?.[0] ?? null,
+												)
+											}
+											required
+											type="file"
+										/>
+										<p className="form-hint">
+											PDF, DOCX, or TXT.
+										</p>
+									</div>
+									<div className="form-field">
+										<Label htmlFor="job-description">
+											Job description (optional)
+										</Label>
+										<Textarea
+											id="job-description"
+											onChange={(event) =>
+												setJobDescription(
+													event.currentTarget.value,
+												)
+											}
+											placeholder="Paste a role description to receive role-specific guidance."
+											value={jobDescription}
+										/>
+									</div>
 									<Button
-										key={evaluation.id}
-										onClick={() =>
-											void openPrivateEvaluation(
-												evaluation.id,
-											)
-										}
-										size="sm"
-										variant="outline"
+										disabled={!privateResume || isWorking}
+										type="submit"
 									>
-										{evaluation.originalName} ·{" "}
-										{evaluation.status}
+										{isWorking ? (
+											<LoaderCircle
+												aria-hidden
+												className="spin"
+											/>
+										) : (
+											<FileSearch />
+										)}
+										{isWorking
+											? "Starting..."
+											: "Check resume"}
 									</Button>
-								))}
-							</div>
+								</form>
+								{error && <p className="form-error">{error}</p>}
+								{privateHistory.length > 0 && (
+									<div className="private-history">
+										<h3>Previous checks</h3>
+										{privateHistory.map((evaluation) => (
+											<button
+												key={evaluation.id}
+												onClick={() =>
+													void openPrivateEvaluation(
+														evaluation.id,
+													)
+												}
+												type="button"
+											>
+												<span className="history-name">
+													{evaluation.originalName}
+												</span>
+												<span className="history-meta">
+													{evaluation.score !== null
+														? `${evaluation.score}/100`
+														: evaluation.status}
+													{" · "}
+													{new Date(
+														evaluation.createdAt,
+													).toLocaleDateString()}
+												</span>
+											</button>
+										))}
+									</div>
+								)}
+							</>
 						)}
 					</section>
 				</div>
 			</section>
 		</main>
+	);
+};
+
+const ProcessingState = () => {
+	const [stepIndex, setStepIndex] = useState(0);
+
+	useEffect(() => {
+		const interval = window.setInterval(() => {
+			setStepIndex((index) => index + 1);
+		}, 1_800);
+		return () => window.clearInterval(interval);
+	}, []);
+
+	return (
+		<div className="report-progress" role="status" aria-live="polite">
+			<LoaderCircle aria-hidden className="spin" />
+			<p>{PROCESSING_STEPS[stepIndex % PROCESSING_STEPS.length]}</p>
+			<small>
+				This usually takes under a minute. Your document stays private.
+			</small>
+		</div>
 	);
 };
 
@@ -232,6 +290,13 @@ const groupByCategory = (
 	return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
 };
 
+const employmentLine = (role: EmploymentFact) => {
+	const title = [role.title, role.employer].filter(Boolean).join(" — ");
+	const end = role.isCurrent ? "present" : role.endDate;
+	const dates = [role.startDate, end].filter(Boolean).join(" to ");
+	return dates ? `${title} (${dates})` : title;
+};
+
 const PrivateReport = ({
 	evaluation,
 	onClose,
@@ -243,48 +308,108 @@ const PrivateReport = ({
 
 	if (evaluation.status === "failed") {
 		return (
-			<p className="form-error">
-				{evaluation.safeError ?? "This resume could not be processed."}
-			</p>
-		);
-	}
-	if (evaluation.status !== "complete") {
-		return (
-			<p>
-				Checking your resume. This page updates when your private report
-				is ready.
-			</p>
-		);
-	}
-	return (
-		<div className="private-report">
-			<p className="eyebrow">Private report</p>
-			<h3>{evaluation.score}/100 document readiness</h3>
-			<p>
-				This indication reflects documented contact details and
-				recognizable skills. It does not infer missing experience.
-			</p>
-			{evaluation.facts?.skills?.length ? (
-				<div className="recognized-skills">
-					<h4>Recognized skills</h4>
-					{groupByCategory(evaluation.facts.skills).map(
-						([category, names]) => (
-							<p key={category}>
-								<strong>{category}</strong> {names.join(", ")}
-							</p>
-						),
-					)}
-				</div>
-			) : null}
-			{evaluation.suggestions?.map((suggestion) => (
-				<p key={suggestion.title}>
-					<strong>{suggestion.title}</strong>
-					<br />
-					{suggestion.detail}
+			<div className="private-report">
+				<p className="form-error">
+					{evaluation.safeError ??
+						"This resume could not be processed."}
 				</p>
-			))}
-			{evaluation.hasImprovedResume && (
-				<div>
+				<Button onClick={onClose} size="sm" variant="outline">
+					Try another document
+				</Button>
+			</div>
+		);
+	}
+	if (isPendingStatus(evaluation.status)) {
+		return <ProcessingState />;
+	}
+
+	const facts = evaluation.facts ?? {};
+	const skillGroups = groupByCategory(facts.skills ?? []);
+
+	return (
+		<div className="private-report report-preview">
+			<header>
+				<span>{evaluation.originalName}</span>
+				<span>
+					{evaluation.completedAt
+						? new Date(evaluation.completedAt).toLocaleDateString()
+						: null}
+				</span>
+			</header>
+			<div className="report-score">
+				<strong>{evaluation.score ?? "–"}</strong>
+				<span>of 100 readiness</span>
+				<p>
+					Based only on what your resume documents. It does not infer
+					missing experience.
+				</p>
+			</div>
+
+			{skillGroups.length > 0 && (
+				<section className="report-section">
+					<h4>Recognized skills</h4>
+					{skillGroups.map(([category, names]) => (
+						<p key={category}>
+							<strong>{category}</strong> {names.join(", ")}
+						</p>
+					))}
+				</section>
+			)}
+
+			{(facts.employment?.length ?? 0) > 0 && (
+				<section className="report-section">
+					<h4>Experience</h4>
+					{facts.employment?.map((role) => (
+						<p
+							key={`${role.title}-${role.employer}-${role.startDate}`}
+						>
+							{employmentLine(role)}
+						</p>
+					))}
+				</section>
+			)}
+
+			{((facts.education?.length ?? 0) > 0 ||
+				(facts.certifications?.length ?? 0) > 0) && (
+				<section className="report-section">
+					<h4>Education and credentials</h4>
+					{facts.education?.map((entry) => (
+						<p
+							key={`${entry.degree}-${entry.institution}-${entry.graduationDate}`}
+						>
+							{[
+								entry.degree,
+								entry.fieldOfStudy,
+								entry.institution,
+							]
+								.filter(Boolean)
+								.join(", ")}
+						</p>
+					))}
+					{facts.certifications?.map((entry) => (
+						<p key={`${entry.name}-${entry.issuer}`}>
+							{[entry.name, entry.issuer]
+								.filter(Boolean)
+								.join(" — ")}
+						</p>
+					))}
+				</section>
+			)}
+
+			{(evaluation.suggestions?.length ?? 0) > 0 && (
+				<section className="report-section">
+					<h4>Suggestions</h4>
+					{evaluation.suggestions?.map((suggestion) => (
+						<div className="suggestion-row" key={suggestion.title}>
+							<b>{suggestion.title}</b>
+							<p>{suggestion.detail}</p>
+						</div>
+					))}
+				</section>
+			)}
+
+			<footer className="report-actions">
+				{evaluation.hasImprovedResume && (
 					<Button
 						onClick={() => {
 							setDownloadError(null);
@@ -292,23 +417,23 @@ const PrivateReport = ({
 								.downloadImprovedResume(evaluation.id)
 								.catch(() =>
 									setDownloadError(
-										"Corrected resume could not be downloaded",
+										"The corrected resume could not be downloaded. Try again.",
 									),
 								);
 						}}
 						size="sm"
-						variant="outline"
 					>
-						Download corrected resume (.docx)
+						<FileDown />
+						Corrected resume (.docx)
 					</Button>
-					{downloadError && (
-						<p className="form-error">{downloadError}</p>
-					)}
-				</div>
-			)}
-			<Button onClick={onClose} size="sm" variant="outline">
-				Check another resume
-			</Button>
+				)}
+				<Button onClick={onClose} size="sm" variant="outline">
+					{evaluation.hasImprovedResume
+						? "Check another resume"
+						: "Check another"}
+				</Button>
+				{downloadError && <p className="form-error">{downloadError}</p>}
+			</footer>
 		</div>
 	);
 };

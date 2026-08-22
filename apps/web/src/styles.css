@@ -386,18 +386,109 @@ p {
 .recognized-skills {
 	margin-top: 1rem;
 }
-.recognized-skills h4 {
-	font-size: 0.8125rem;
+.private-report:not(.report-preview) {
+	padding-top: 1.25rem;
+}
+.report-progress {
+	align-items: center;
+	display: grid;
+	gap: 0.4rem;
+	justify-items: start;
+	padding-top: 1.5rem;
+}
+.report-progress svg {
+	height: 1rem;
+	width: 1rem;
+}
+.spin {
+	animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.spin {
+		animation: none;
+	}
+}
+.report-preview .report-section {
+	border-top: 1px solid var(--rule);
+	padding: 0.9rem 1rem;
+}
+.report-preview .report-section:first-of-type {
+	margin-top: 0.5rem;
+}
+.report-preview .report-section h4 {
+	font-size: 0.6875rem;
+	font-weight: 600;
 	margin-bottom: 0.5rem;
 }
-.recognized-skills p {
+.report-preview .report-section p {
+	color: var(--muted);
 	font-size: 0.75rem;
 	margin-bottom: 0.35rem;
 }
-.recognized-skills strong {
+.report-preview .report-section p strong {
+	color: var(--ink);
 	display: inline-block;
 	font-weight: 600;
 	margin-right: 0.4rem;
+}
+.suggestion-row {
+	border-left: 2px solid var(--ink);
+	margin-bottom: 0.75rem;
+	padding-left: 0.7rem;
+}
+.suggestion-row b {
+	display: block;
+	font-size: 0.8125rem;
+	font-weight: 600;
+}
+.suggestion-row p {
+	color: var(--muted);
+	font-size: 0.75rem;
+	margin: 0.1rem 0 0;
+}
+.report-actions {
+	align-items: center;
+	border-top: 1px solid var(--rule);
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	padding: 1rem;
+}
+.report-actions .form-error {
+	width: 100%;
+}
+.private-history {
+	border-top: 1px solid var(--rule);
+	margin-top: 1.25rem;
+	padding-top: 0.75rem;
+}
+.private-history h3 {
+	font-size: 0.75rem;
+	font-weight: 600;
+	margin-bottom: 0.35rem;
+}
+.private-history button {
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+	display: flex;
+	font-size: 0.8125rem;
+	justify-content: space-between;
+	padding: 0.45rem 0.15rem;
+	text-align: left;
+	width: 100%;
+}
+.private-history button:hover {
+	background: var(--soft);
+}
+.history-meta {
+	color: var(--muted);
+	font-size: 0.75rem;
 }
 
 /* Keep the existing employer workflow functional while removing visual decoration. */

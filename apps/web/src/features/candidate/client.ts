@@ -74,6 +74,28 @@ export const candidateClient = {
 	},
 };
 
+export type SkillFact = {
+	canonicalName: string;
+	category?: string | null;
+};
+
+export type EmploymentFact = {
+	employer?: string | null;
+	title?: string | null;
+	startDate?: string | null;
+	endDate?: string | null;
+	isCurrent?: boolean;
+};
+
+export type EducationFact = {
+	institution?: string | null;
+	degree?: string | null;
+	fieldOfStudy?: string | null;
+	graduationDate?: string | null;
+};
+
+export type CertificationFact = { name: string; issuer?: string | null };
+
 export type IndependentEvaluation = {
 	id: string;
 	originalName: string;
@@ -86,6 +108,10 @@ export type IndependentEvaluation = {
 	hasImprovedResume?: boolean;
 	suggestions?: Array<{ title: string; detail: string }>;
 	facts?: {
-		skills?: Array<{ canonicalName: string; category?: string | null }>;
+		skills?: SkillFact[];
+		employment?: EmploymentFact[];
+		education?: EducationFact[];
+		certifications?: CertificationFact[];
+		warnings?: string[];
 	};
 };
