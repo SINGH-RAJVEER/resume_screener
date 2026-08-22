@@ -789,6 +789,52 @@ p {
 	overflow-wrap: anywhere;
 	padding: 0.15rem 0.4rem;
 }
+.invitation-facts {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem 1.25rem;
+}
+.passcode {
+	font-size: 0.8125rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+}
+.modal-head-row {
+	align-items: center;
+	display: flex;
+	justify-content: space-between;
+}
+.member-list {
+	display: grid;
+	gap: 0.4rem;
+	max-height: 40vh;
+	overflow-y: auto;
+}
+.member-row {
+	align-items: center;
+	border: 1px solid var(--rule);
+	display: flex;
+	font-size: 0.8125rem;
+	justify-content: space-between;
+	padding: 0.55rem 0.7rem;
+}
+.member-side {
+	align-items: center;
+	display: flex;
+	gap: 0.6rem;
+}
+.member-form {
+	border-top: 1px solid var(--rule);
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	padding-top: 1rem;
+}
+.member-form input {
+	flex: 1;
+	min-width: 14rem;
+}
 .job-tabs {
 	border-bottom: 1px solid var(--rule);
 	display: flex;

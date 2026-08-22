@@ -22,6 +22,7 @@ import {
 	type EvaluationFilters,
 	type Job,
 	type JobDetail,
+	type Member,
 	type Organization,
 	type Requirement,
 	workspaceClient,
@@ -30,6 +31,48 @@ import {
 type TabName = "results" | "criteria" | "upload";
 
 type EligibilityFilter = "all" | Evaluation["eligibility"];
+
+type Invitation = {
+	token: string;
+	passcode: string;
+	expiresAt: string;
+};
+
+type WindowStatus = { label: string; className: string };
+
+const applicationStatus = (job: JobDetail): WindowStatus => {
+	if (!job.applicationOpensAt || !job.applicationClosesAt) {
+		return {
+			label: "no application window",
+			className: "status-chip chip-muted",
+		};
+	}
+	const now = Date.now();
+	const opens = new Date(job.applicationOpensAt).getTime();
+	const closes = new Date(job.applicationClosesAt).getTime();
+	if (now < opens) {
+		return {
+			label: `opens ${new Date(opens).toLocaleDateString()}`,
+			className: "status-chip chip-outline",
+		};
+	}
+	if (now >= closes) {
+		return {
+			label: "applications closed",
+			className: "status-chip chip-muted",
+		};
+	}
+	return {
+		label: `open until ${new Date(closes).toLocaleDateString()}`,
+		className: "status-chip chip-solid",
+	};
+};
+
+// datetime-local inputs need "YYYY-MM-DDTHH:mm" in local time.
+const toLocalInput = (iso: string | null) =>
+	iso
+		? new Date(iso).toLocaleString("sv").replace(" ", "T").slice(0, 16)
+		: "";
 
 const draftsToRequirements = (job: JobDetail): Requirement[] =>
 	job.draftRequirements.map((requirement) => ({
@@ -97,8 +140,17 @@ export const Workspace = () => {
 	const [requirements, setRequirements] = useState<Requirement[]>([]);
 	const [resumes, setResumes] = useState<File[]>([]);
 	const [uploadInputKey, setUploadInputKey] = useState(0);
-	const [invitationToken, setInvitationToken] = useState<string | null>(null);
+	const [invitation, setInvitation] = useState<Invitation | null>(null);
+	const [inviteHours, setInviteHours] = useState(168);
 	const [copiedInvitation, setCopiedInvitation] = useState(false);
+	const [isWindowOpen, setIsWindowOpen] = useState(false);
+	const [windowOpens, setWindowOpens] = useState("");
+	const [windowCloses, setWindowCloses] = useState("");
+	const [isMembersOpen, setIsMembersOpen] = useState(false);
+	const [members, setMembers] = useState<Member[]>([]);
+	const [memberEmail, setMemberEmail] = useState("");
+	const [memberRole, setMemberRole] =
+		useState<Pick<Member, "role">["role"]>("recruiter");
 	const [evaluationQuery, setEvaluationQuery] = useState("");
 	const [eligibilityFilter, setEligibilityFilter] =
 		useState<EligibilityFilter>("all");
@@ -114,6 +166,8 @@ export const Workspace = () => {
 	const closeOverlays = useCallback(() => {
 		setIsCreateOrgOpen(false);
 		setIsCreateJobOpen(false);
+		setIsWindowOpen(false);
+		setIsMembersOpen(false);
 		setInspectingEvaluation(null);
 	}, []);
 
@@ -175,7 +229,7 @@ export const Workspace = () => {
 
 	useEffect(() => {
 		if (!organizationId) return;
-		setInvitationToken(null);
+		setInvitation(null);
 		setSelectedJob(null);
 		setInspectingEvaluation(null);
 		void workspaceClient
@@ -207,7 +261,11 @@ export const Workspace = () => {
 	}, [selectedJob, hasPendingEvaluations, refreshEvaluations]);
 
 	const overlayOpen =
-		isCreateOrgOpen || isCreateJobOpen || inspectingEvaluation !== null;
+		isCreateOrgOpen ||
+		isCreateJobOpen ||
+		isWindowOpen ||
+		isMembersOpen ||
+		inspectingEvaluation !== null;
 
 	useEffect(() => {
 		if (!overlayOpen) return;
@@ -350,19 +408,80 @@ export const Workspace = () => {
 	const handleCreateInvitation = async () => {
 		if (!selectedJob) return;
 		try {
-			const invitation = await workspaceClient.createInvitation(
+			const created = await workspaceClient.createInvitation(
 				selectedJob.id,
+				inviteHours,
 			);
-			setInvitationToken(invitation.token);
-			setNotice("Single-use invitation link created.");
+			setInvitation({
+				token: created.token,
+				passcode: created.passcode,
+				expiresAt: created.expiresAt,
+			});
+			setNotice(
+				"Single-use invitation created. Share the link or the passcode.",
+			);
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const saveApplicationWindow = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!selectedJob || !windowOpens || !windowCloses) return;
+		try {
+			await workspaceClient.setApplicationWindow(
+				selectedJob.id,
+				new Date(windowOpens).toISOString(),
+				new Date(windowCloses).toISOString(),
+			);
+			setSelectedJob(await workspaceClient.job(selectedJob.id));
+			setIsWindowOpen(false);
+			setNotice("Application window updated.");
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const openMembersModal = async () => {
+		setIsMembersOpen(true);
+		try {
+			setMembers(await workspaceClient.members(organizationId));
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const addMember = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!memberEmail.trim()) return;
+		try {
+			const added = await workspaceClient.addMember(
+				organizationId,
+				memberEmail,
+				memberRole,
+			);
+			setMemberEmail("");
+			setMemberRole("recruiter");
+			setMembers(await workspaceClient.members(organizationId));
+			setNotice(`Member added as ${added.role}.`);
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const removeMember = async (userId: string) => {
+		try {
+			await workspaceClient.removeMember(organizationId, userId);
+			setMembers(await workspaceClient.members(organizationId));
+			setNotice("Member removed.");
 		} catch (reason) {
 			reportError(reason);
 		}
 	};
 
 	const copyInvitationLink = () => {
-		if (!invitationToken) return;
-		const link = `${window.location.origin}/apply/${invitationToken}`;
+		if (!invitation) return;
+		const link = `${window.location.origin}/apply/${invitation.token}`;
 		void navigator.clipboard.writeText(link);
 		setCopiedInvitation(true);
 		setTimeout(() => setCopiedInvitation(false), 2_000);
@@ -427,6 +546,14 @@ export const Workspace = () => {
 					</div>
 				</div>
 				<div className="workspace-header-right">
+					<Button
+						disabled={!organizationId}
+						onClick={() => void openMembersModal()}
+						size="sm"
+						variant="outline"
+					>
+						Members
+					</Button>
 					<span>{session.user.name || session.user.email}</span>
 					<Button
 						onClick={() => authClient.signOut()}
@@ -533,6 +660,17 @@ export const Workspace = () => {
 												? "requirements confirmed"
 												: "needs confirmation"}
 										</span>
+										<span
+											className={
+												applicationStatus(selectedJob)
+													.className
+											}
+										>
+											{
+												applicationStatus(selectedJob)
+													.label
+											}
+										</span>
 									</div>
 									<p className="job-meta">
 										{currentOrg?.name} ·{" "}
@@ -542,6 +680,45 @@ export const Workspace = () => {
 									</p>
 								</div>
 								<div className="job-actions">
+									<Button
+										onClick={() => {
+											setWindowOpens(
+												toLocalInput(
+													selectedJob.applicationOpensAt,
+												),
+											);
+											setWindowCloses(
+												toLocalInput(
+													selectedJob.applicationClosesAt,
+												),
+											);
+											setIsWindowOpen(true);
+										}}
+										size="sm"
+										variant="outline"
+									>
+										Application window
+									</Button>
+									<select
+										aria-label="Invitation validity"
+										className="workspace-filter-select"
+										onChange={(event) =>
+											setInviteHours(
+												Number(event.target.value),
+											)
+										}
+										value={inviteHours}
+									>
+										<option value={24}>
+											Invite valid 24 h
+										</option>
+										<option value={168}>
+											Invite valid 7 days
+										</option>
+										<option value={720}>
+											Invite valid 30 days
+										</option>
+									</select>
 									<Button
 										onClick={() =>
 											void handleCreateInvitation()
@@ -562,21 +739,35 @@ export const Workspace = () => {
 								</div>
 							</div>
 
-							{invitationToken && (
+							{invitation && (
 								<div className="invitation-strip">
-									<span>
-										Single-use link:{" "}
-										<code>
-											{`${window.location.origin}/apply/${invitationToken}`}
-										</code>
-									</span>
+									<div className="invitation-facts">
+										<span>
+											Link{" "}
+											<code>{`${window.location.origin}/apply/${invitation.token}`}</code>
+										</span>
+										<span>
+											Passcode{" "}
+											<code className="passcode">
+												{invitation.passcode}
+											</code>
+										</span>
+										<span className="muted-copy">
+											expires{" "}
+											{new Date(
+												invitation.expiresAt,
+											).toLocaleString()}
+										</span>
+									</div>
 									<Button
 										onClick={copyInvitationLink}
 										size="sm"
 										variant="outline"
 									>
 										<Copy />
-										{copiedInvitation ? "Copied" : "Copy"}
+										{copiedInvitation
+											? "Copied"
+											: "Copy link"}
 									</Button>
 								</div>
 							)}
@@ -784,6 +975,161 @@ export const Workspace = () => {
 							</Button>
 						</div>
 					</form>
+				</div>
+			)}
+
+			{isWindowOpen && (
+				<div
+					{...overlayBackdrop({
+						labelledBy: "window-title",
+						onDismiss: () => setIsWindowOpen(false),
+					})}
+				>
+					<form
+						className="modal-panel"
+						onSubmit={saveApplicationWindow}
+					>
+						<h3 id="window-title">Application window</h3>
+						<p className="muted-copy">
+							Candidates can submit resumes through invitations
+							only while the window is open.
+						</p>
+						<div className="form-field">
+							<Label htmlFor="window-opens">Opens at</Label>
+							<Input
+								id="window-opens"
+								onChange={(event) =>
+									setWindowOpens(event.target.value)
+								}
+								required
+								type="datetime-local"
+								value={windowOpens}
+							/>
+						</div>
+						<div className="form-field">
+							<Label htmlFor="window-closes">Closes at</Label>
+							<Input
+								id="window-closes"
+								onChange={(event) =>
+									setWindowCloses(event.target.value)
+								}
+								required
+								type="datetime-local"
+								value={windowCloses}
+							/>
+						</div>
+						<div className="modal-actions">
+							<Button
+								onClick={() => setIsWindowOpen(false)}
+								size="sm"
+								variant="outline"
+								type="button"
+							>
+								Cancel
+							</Button>
+							<Button size="sm" type="submit">
+								Save window
+							</Button>
+						</div>
+					</form>
+				</div>
+			)}
+
+			{isMembersOpen && (
+				<div
+					{...overlayBackdrop({
+						labelledBy: "members-title",
+						onDismiss: () => setIsMembersOpen(false),
+					})}
+				>
+					<div className="modal-panel">
+						<div className="modal-head-row">
+							<h3 id="members-title">
+								Members · {currentOrg?.name}
+							</h3>
+							<button
+								aria-label="Close members"
+								className="icon-button"
+								onClick={() => setIsMembersOpen(false)}
+								type="button"
+							>
+								<X />
+							</button>
+						</div>
+						<div className="member-list">
+							{members.map((member) => (
+								<div className="member-row" key={member.userId}>
+									<span>
+										<span style={{ fontWeight: 600 }}>
+											{member.name}
+										</span>
+										<span className="candidate-email">
+											{member.email}
+										</span>
+									</span>
+									<span className="member-side">
+										<span className="status-chip chip-muted">
+											{member.role}
+										</span>
+										{currentOrg?.role === "owner" &&
+											member.role !== "owner" && (
+												<Button
+													onClick={() =>
+														void removeMember(
+															member.userId,
+														)
+													}
+													size="sm"
+													variant="outline"
+												>
+													Remove
+												</Button>
+											)}
+									</span>
+								</div>
+							))}
+							{members.length === 0 && (
+								<p className="muted-copy">Loading members...</p>
+							)}
+						</div>
+						{currentOrg?.role === "owner" && (
+							<form className="member-form" onSubmit={addMember}>
+								<Input
+									aria-label="Member email"
+									onChange={(event) =>
+										setMemberEmail(event.target.value)
+									}
+									placeholder="colleague@company.com"
+									required
+									type="email"
+									value={memberEmail}
+								/>
+								<select
+									aria-label="Member role"
+									className="workspace-filter-select"
+									onChange={(event) =>
+										setMemberRole(
+											event.target
+												.value as Member["role"],
+										)
+									}
+									value={memberRole}
+								>
+									<option value="recruiter">Recruiter</option>
+									<option value="viewer">Viewer</option>
+								</select>
+								<Button size="sm" type="submit">
+									<Plus />
+									Add member
+								</Button>
+							</form>
+						)}
+						{currentOrg?.role !== "owner" && (
+							<p className="muted-copy">
+								Only owners can add or remove members.
+							</p>
+						)}
+					</div>
 				</div>
 			)}
 

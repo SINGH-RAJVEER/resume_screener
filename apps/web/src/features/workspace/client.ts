@@ -28,8 +28,17 @@ export interface JobDetail {
 	title: string;
 	description: string;
 	confirmed: boolean;
+	applicationOpensAt: string | null;
+	applicationClosesAt: string | null;
 	requirements: Requirement[];
 	draftRequirements: Array<{ stableId: string; normalizedText: string }>;
+}
+
+export interface Member {
+	userId: string;
+	name: string;
+	email: string;
+	role: "owner" | "recruiter" | "viewer";
 }
 
 export interface Evaluation {
@@ -172,9 +181,42 @@ export const workspaceClient = {
 			rejected: Array<{ name: string; reason: string }>;
 		}>(`/api/jobs/${jobId}/resume-batches`, { method: "POST", body });
 	},
-	createInvitation: (jobId: string) =>
-		request<{ id: string; token: string; expiresAt: string }>(
-			`/api/jobs/${jobId}/invitations`,
-			{ method: "POST", body: JSON.stringify({ expires_in_hours: 168 }) },
+	createInvitation: (jobId: string, expiresInHours = 168) =>
+		request<{
+			id: string;
+			token: string;
+			passcode: string;
+			expiresAt: string;
+		}>(`/api/jobs/${jobId}/invitations`, {
+			method: "POST",
+			body: JSON.stringify({ expires_in_hours: expiresInHours }),
+		}),
+	setApplicationWindow: (jobId: string, opensAt: string, closesAt: string) =>
+		request<{ opensAt: string; closesAt: string }>(
+			`/api/jobs/${jobId}/application-window`,
+			{
+				method: "PUT",
+				body: JSON.stringify({
+					opens_at: opensAt,
+					closes_at: closesAt,
+				}),
+			},
+		),
+	members: (organizationId: string) =>
+		request<Member[]>(`/api/organizations/${organizationId}/members`),
+	addMember: (organizationId: string, email: string, role: Member["role"]) =>
+		request<{ userId: string; role: string }>(
+			`/api/organizations/${organizationId}/members`,
+			{
+				method: "POST",
+				body: JSON.stringify({ email, role }),
+			},
+		),
+	removeMember: (organizationId: string, userId: string) =>
+		request<void>(
+			`/api/organizations/${organizationId}/members/${userId}`,
+			{
+				method: "DELETE",
+			},
 		),
 };
