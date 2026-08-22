@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePath
