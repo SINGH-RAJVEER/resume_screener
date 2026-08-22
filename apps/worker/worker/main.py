@@ -19,6 +19,7 @@ from .documents.parser import DocumentParseError, extract_blocks
 from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
+from .evaluations.semantic import text_hash
 from .extraction.extractor import (
 	assess_requirements,
 	extract_resume_facts,
@@ -133,7 +134,7 @@ class Worker:
 			result = await connection.execute(
 				text(
 					"""
-					SELECT document.storage_key, document.media_type
+					SELECT document.storage_key, document.media_type, document.original_name
 					FROM resume_version AS version
 					JOIN resume_document AS document ON document.id = version.resume_document_id
 					WHERE version.id = :version_id
@@ -149,8 +150,40 @@ class Worker:
 			blocks = extract_blocks(content, str(row["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
+		block_list = blocks["blocks"]
+		normalized_facts = normalize_resume(block_list)
+		if self._openrouter is not None:
+			try:
+				extracted = await extract_resume_facts(
+					self._openrouter,
+					model=self._settings.openrouter.extraction_model,
+					blocks=block_list,
+					max_output_tokens=self._settings.openrouter.max_output_tokens,
+					document=(
+						str(row["original_name"]),
+						content,
+						str(row["media_type"]),
+					),
+				)
+			except OpenRouterError as error:
+				logger.warning(
+					"model extraction failed; using deterministic facts",
+					extra={"job_id": job.id, "reason": str(error)},
+				)
+			else:
+				normalized_facts = merge_facts(normalized_facts, extracted, block_list)
+		await self._store_parsed_resume(
+			job, blocks=blocks, normalized_facts=normalized_facts
+		)
+
+	async def _store_parsed_resume(
+		self,
+		job: ClaimedJob,
+		*,
+		blocks: Mapping[str, object],
+		normalized_facts: Mapping[str, object],
+	) -> None:
 		async with self._engine.begin() as connection:
-			normalized_facts = normalize_resume(blocks["blocks"])
 			await connection.execute(
 				text(
 					"""
@@ -216,6 +249,106 @@ class Worker:
 						"""
 					),
 					{"id": secrets.token_urlsafe(18), "evaluation_id": evaluation_id},
+				)
+		await self._store_block_embeddings(job)
+
+	async def _store_block_embeddings(self, job: ClaimedJob) -> None:
+		if self._openrouter is None:
+			return
+		model = self._settings.openrouter.embedding_model
+		async with self._engine.connect() as connection:
+			result = await connection.execute(
+				text(
+					"""
+					SELECT block->>'id' AS block_id, block->>'text' AS block_text
+					FROM resume_version, jsonb_array_elements(extraction_blocks->'blocks') AS block
+					WHERE id = :version_id
+					"""
+				),
+				{"version_id": job.payload_reference},
+			)
+			rows = result.mappings().all()
+		texts_by_block: dict[str, str] = {}
+		hashes_by_block: dict[str, str] = {}
+		for row in rows:
+			block_text = str(row["block_text"] or "").strip()
+			if not block_text:
+				continue
+			block_id = str(row["block_id"])
+			texts_by_block[block_id] = block_text
+			hashes_by_block[block_id] = text_hash(block_text)
+		if not texts_by_block:
+			return
+		unique_hashes = sorted(set(hashes_by_block.values()))
+		async with self._engine.begin() as connection:
+			cached = await connection.execute(
+				text(
+					"SELECT text_hash, vector FROM embedding_cache "
+					"WHERE model = :model AND text_hash = ANY(:hashes)"
+				),
+				{"model": model, "hashes": unique_hashes},
+			)
+			vectors_by_hash = {
+				str(row["text_hash"]): list(row["vector"])
+				for row in cached.mappings()
+			}
+		missing_texts: dict[str, str] = {}
+		for block_id, block_hash in hashes_by_block.items():
+			if block_hash not in vectors_by_hash:
+				missing_texts.setdefault(block_hash, texts_by_block[block_id])
+		if missing_texts:
+			try:
+				vectors = await self._openrouter.embed_texts(
+					model=model, texts=list(missing_texts.values())
+				)
+			except OpenRouterError as error:
+				logger.warning(
+					"embedding failed; skipping semantic evidence",
+					extra={"job_id": job.id, "reason": str(error)},
+				)
+				return
+			for block_hash, vector in zip(missing_texts.keys(), vectors):
+				vectors_by_hash[block_hash] = vector
+			async with self._engine.begin() as connection:
+				for block_hash, vector in vectors_by_hash.items():
+					if block_hash in missing_texts:
+						await connection.execute(
+							text(
+								"""
+								INSERT INTO embedding_cache (model, text_hash, vector)
+								VALUES (:model, :text_hash, CAST(:vector AS jsonb))
+								ON CONFLICT (model, text_hash) DO NOTHING
+								"""
+							),
+							{
+								"model": model,
+								"text_hash": block_hash,
+								"vector": json.dumps(vector),
+							},
+						)
+		async with self._engine.begin() as connection:
+			for block_id, block_hash in hashes_by_block.items():
+				vector = vectors_by_hash.get(block_hash)
+				if vector is None:
+					continue
+				await connection.execute(
+					text(
+						"""
+						INSERT INTO resume_block_embedding (
+							resume_version_id, block_id, model, text_hash, vector
+						) VALUES (:version_id, :block_id, :model, :text_hash,
+							CAST(:vector AS jsonb))
+						ON CONFLICT (resume_version_id, block_id, model) DO UPDATE
+							SET vector = EXCLUDED.vector, created_at = now()
+						"""
+					),
+					{
+						"version_id": job.payload_reference,
+						"block_id": block_id,
+						"model": model,
+						"text_hash": block_hash,
+						"vector": json.dumps(vector),
+					},
 				)
 
 	async def _process_independent_evaluation(self, job: ClaimedJob) -> None:
