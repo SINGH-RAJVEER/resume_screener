@@ -19,7 +19,7 @@ from .documents.parser import DocumentParseError, extract_blocks
 from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
-from .evaluations.semantic import text_hash
+from .evaluations.semantic import text_hash, top_semantic_matches
 from .extraction.extractor import (
 	assess_requirements,
 	extract_resume_facts,
@@ -540,17 +540,22 @@ class Worker:
 						assessments, model_assessments, requirement_list
 					)
 					outcome = summarize(assessments, requirement_list)
+			semantic_evidence = await self._retrieve_semantic_evidence(
+				job,
+				version_id=str(evaluation["resume_version_id"]),
+				requirements=requirement_list,
+			)
 			for assessment in outcome.assessments:
 				await connection.execute(
 					text(
 						"""
 						INSERT INTO requirement_assessment (
 							id, evaluation_id, job_requirement_id, outcome, confidence,
-							reasoning, evidence, created_at
+							reasoning, evidence, semantic_evidence, created_at
 						) VALUES (
 							:id, :evaluation_id, :job_requirement_id, :outcome,
 							:confidence, :reasoning,
-							CAST(:evidence AS jsonb), now()
+							CAST(:evidence AS jsonb), CAST(:semantic AS jsonb), now()
 						)
 						ON CONFLICT (evaluation_id, job_requirement_id) DO NOTHING
 						"""
@@ -563,6 +568,9 @@ class Worker:
 						"confidence": assessment.confidence,
 						"reasoning": assessment.reasoning,
 						"evidence": json.dumps(assessment.evidence),
+						"semantic": json.dumps(
+							semantic_evidence.get(assessment.requirement_id)
+						),
 					},
 				)
 			await connection.execute(
@@ -588,6 +596,50 @@ class Worker:
 					"eligibility": outcome.eligibility,
 				},
 			)
+
+	async def _retrieve_semantic_evidence(
+		self,
+		job: ClaimedJob,
+		*,
+		version_id: str,
+		requirements: list[dict[str, object]],
+	) -> dict[str, dict[str, object]]:
+		if self._openrouter is None or not requirements:
+			return {}
+		model = self._settings.openrouter.embedding_model
+		async with self._engine.connect() as connection:
+			result = await connection.execute(
+				text(
+					"""
+					SELECT block_id, vector FROM resume_block_embedding
+					WHERE resume_version_id = :version_id AND model = :model
+					"""
+				),
+				{"version_id": version_id, "model": model},
+			)
+			block_vectors = {
+				str(row["block_id"]): [float(value) for value in row["vector"]]
+				for row in result.mappings()
+			}
+		if not block_vectors:
+			return {}
+		try:
+			vectors = await self._openrouter.embed_texts(
+				model=model,
+				texts=[str(requirement["normalized_text"]) for requirement in requirements],
+			)
+		except OpenRouterError as error:
+			logger.warning(
+				"requirement embedding failed; no semantic evidence",
+				extra={"job_id": job.id, "reason": str(error)},
+			)
+			return {}
+		retrieved: dict[str, dict[str, object]] = {}
+		for requirement, vector in zip(requirements, vectors):
+			matches = top_semantic_matches(vector, block_vectors)
+			if matches:
+				retrieved[str(requirement["id"])] = {"model": model, "matches": matches}
+		return retrieved
 
 	async def _complete(self, job: ClaimedJob) -> None:
 		await self._update_job(job, "completed", None, None)
