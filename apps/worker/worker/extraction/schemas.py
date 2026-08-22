@@ -4,12 +4,14 @@ Field names mirror `apps/api/app/extraction_schemas.py` so stored artifacts
 stay comparable across the API and worker deployables.
 """
 
+from enum import StrEnum
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 RESUME_FACTS_SCHEMA_VERSION = "1"
+REQUIREMENT_ASSESSMENT_SCHEMA_VERSION = "1"
 EXTRACTION_PROMPT_VERSION = "1"
 
 DATE_PATTERN = r"^\d{4}(-\d{2})?$"
@@ -65,6 +67,26 @@ class CertificationFact(SchemaModel):
 class Suggestion(SchemaModel):
 	title: str = Field(min_length=1, max_length=200)
 	detail: str = Field(min_length=1, max_length=1_000)
+
+
+class RequirementOutcome(StrEnum):
+	MET = "met"
+	PARTIAL = "partial"
+	NOT_MET = "not_met"
+	UNKNOWN = "unknown"
+
+
+class AssessedRequirement(SchemaModel):
+	requirement_id: str = Field(min_length=1, max_length=128)
+	# Strict mode would demand an enum instance; model output arrives as text.
+	outcome: RequirementOutcome = Field(strict=False)
+	confidence: float = Field(ge=0, le=1)
+	reasoning: str = Field(min_length=1, max_length=2_000)
+	evidence: list[EvidenceQuote] = Field(default=[], max_length=20)
+
+
+class AssessmentOutput(SchemaModel):
+	assessments: list[AssessedRequirement] = Field(max_length=200)
 
 
 class ResumeExtraction(SchemaModel):

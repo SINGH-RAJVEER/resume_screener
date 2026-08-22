@@ -1,5 +1,5 @@
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -26,12 +26,19 @@ class EvaluationResult:
 def evaluate(
 	normalized_facts: Mapping[str, Any], requirements: Iterable[Mapping[str, Any]]
 ) -> EvaluationResult:
+	requirement_list = list(requirements)
 	raw_skills = cast(list[Mapping[str, Any]], normalized_facts.get("skills", []))
 	skills = {
 		str(skill["canonicalName"]): [str(block_id) for block_id in skill["evidenceBlockIds"]]
 		for skill in raw_skills
 	}
-	assessments = [assess_requirement(requirement, skills) for requirement in requirements]
+	assessments = [assess_requirement(requirement, skills) for requirement in requirement_list]
+	return summarize(assessments, requirement_list)
+
+
+def summarize(
+	assessments: Sequence[Assessment], requirements: Sequence[Mapping[str, Any]]
+) -> EvaluationResult:
 	scored = [
 		(assessment, requirement)
 		for assessment, requirement in zip(assessments, requirements, strict=True)
@@ -61,7 +68,44 @@ def evaluate(
 		if any(assessment.outcome in {"partial", "unknown"} for assessment in hard_gates)
 		else "eligible"
 	)
-	return EvaluationResult(assessments, score, coverage, eligibility)
+	return EvaluationResult(list(assessments), score, coverage, eligibility)
+
+
+def refine_assessments(
+	deterministic: Sequence[Assessment],
+	model_assessments: Sequence[Mapping[str, object]],
+	requirements: Sequence[Mapping[str, Any]],
+) -> list[Assessment]:
+	"""Prefer model outcomes while never lowering evidenced deterministic matches."""
+	by_requirement = {str(item.get("requirementId")): item for item in model_assessments}
+	refined: list[Assessment] = []
+	for assessment, requirement in zip(deterministic, requirements, strict=True):
+		model = by_requirement.get(str(requirement["id"]))
+		if model is None:
+			refined.append(assessment)
+			continue
+		outcome = str(model.get("outcome", "unknown"))
+		if assessment.outcome == "met" and outcome != "met":
+			# Deterministic evidence proves the claim; a model cannot erase it.
+			outcome = "partial" if outcome == "not_met" else assessment.outcome
+		reasoning = str(model.get("reasoning", "")) or assessment.reasoning
+		evidence = [
+			cast(dict[str, str], entry)
+			for entry in cast(list[object], model.get("evidence") or [])
+			if isinstance(entry, dict)
+		] or assessment.evidence
+		raw_confidence = model.get("confidence", 0.0)
+		confidence = max(0.0, min(float(cast(int | float, raw_confidence)), 1.0))
+		refined.append(
+			Assessment(
+				assessment.requirement_id,
+				outcome,
+				confidence,
+				reasoning,
+				evidence,
+			)
+		)
+	return refined
 
 
 def assess_requirement(

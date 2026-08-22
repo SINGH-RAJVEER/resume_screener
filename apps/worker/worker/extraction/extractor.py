@@ -5,8 +5,14 @@ from pydantic import ValidationError
 
 from ..documents.vocabulary import load_vocabulary
 from ..providers.openrouter import OpenRouterClient, OpenRouterError, document_file_part
-from .prompt import EXTRACTION_SYSTEM_PROMPT
-from .schemas import RESUME_FACTS_SCHEMA_VERSION, ResumeExtraction, strict_schema
+from .prompt import ASSESSMENT_SYSTEM_PROMPT, EXTRACTION_SYSTEM_PROMPT
+from .schemas import (
+	RESUME_FACTS_SCHEMA_VERSION,
+	AssessmentOutput,
+	RequirementOutcome,
+	ResumeExtraction,
+	strict_schema,
+)
 
 
 def blocks_document(blocks: Sequence[Mapping[str, object]]) -> str:
@@ -66,6 +72,72 @@ def validate_extraction(raw: dict[str, object], block_ids: set[str]) -> dict[str
 		]
 	facts["schemaVersion"] = RESUME_FACTS_SCHEMA_VERSION
 	return facts
+
+
+async def assess_requirements(
+	client: OpenRouterClient,
+	*,
+	model: str,
+	requirements: Sequence[Mapping[str, object]],
+	blocks: Sequence[Mapping[str, object]],
+	max_output_tokens: int = 4096,
+) -> list[dict[str, object]]:
+	requirement_lines = "\n".join(
+		f"- id: {requirement['id']} | text: {requirement.get('normalized_text', '')}"
+		for requirement in requirements
+	)
+	parts: list[dict[str, object]] = [
+		{
+			"type": "text",
+			"text": "<job_requirements>\n" + requirement_lines + "\n</job_requirements>",
+		},
+		{
+			"type": "text",
+			"text": "<resume_document>\n" + blocks_document(list(blocks)) + "\n</resume_document>",
+		},
+	]
+	raw = await client.complete_json(
+		model=model,
+		system_prompt=ASSESSMENT_SYSTEM_PROMPT,
+		user_parts=parts,
+		schema_name="requirement_assessments",
+		schema=strict_schema(AssessmentOutput),
+		max_output_tokens=max_output_tokens,
+	)
+	return validate_assessments(
+		raw,
+		{str(requirement["id"]) for requirement in requirements},
+		{str(block["id"]) for block in blocks},
+	)
+
+
+def validate_assessments(
+	raw: dict[str, object], requirement_ids: set[str], block_ids: set[str]
+) -> list[dict[str, object]]:
+	try:
+		output = AssessmentOutput.model_validate(raw)
+	except ValidationError as error:
+		raise OpenRouterError("Model assessment does not match the schema") from error
+	valid: list[dict[str, object]] = []
+	for assessment in output.assessments:
+		if assessment.requirement_id not in requirement_ids:
+			continue
+		entry = assessment.model_dump(by_alias=True)
+		entry["evidence"] = [
+			item
+			for item in entry["evidence"]
+			if str(cast(dict[str, object], item).get("blockId", "")) in block_ids
+		]
+		if (
+			RequirementOutcome(entry["outcome"]) is not RequirementOutcome.UNKNOWN
+			and not entry["evidence"]
+		):
+			# Confirmed outcomes require evidence; unsupported confirmations
+			# degrade to unknown rather than being dropped.
+			entry["outcome"] = RequirementOutcome.UNKNOWN.value
+			entry["confidence"] = min(float(entry["confidence"]), 0.5)
+		valid.append(entry)
+	return valid
 
 
 def prune_skill(

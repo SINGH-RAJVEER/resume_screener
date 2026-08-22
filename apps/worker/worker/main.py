@@ -4,7 +4,7 @@ import json
 import logging
 import random
 import secrets
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -15,9 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from .config import WorkerSettings, load_settings
 from .documents.normalizer import normalize_resume
 from .documents.parser import DocumentParseError, extract_blocks
-from .evaluations.evaluator import evaluate
+from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
-from .extraction.extractor import extract_resume_facts, merge_facts, merge_suggestions
+from .extraction.extractor import (
+	assess_requirements,
+	extract_resume_facts,
+	merge_facts,
+	merge_suggestions,
+)
 from .providers.openrouter import OpenRouterClient, OpenRouterError
 
 logger = logging.getLogger("resume-screener.worker")
@@ -326,7 +331,8 @@ class Worker:
 			result = await connection.execute(
 				text(
 					"""
-					SELECT evaluation.resume_version_id, version.normalized_facts
+					SELECT evaluation.resume_version_id, version.normalized_facts,
+						version.extraction_blocks
 					FROM evaluation
 					JOIN resume_version AS version ON version.id = evaluation.resume_version_id
 					WHERE evaluation.id = :evaluation_id
@@ -350,10 +356,33 @@ class Worker:
 				),
 				{"evaluation_id": job.payload_reference},
 			)
-			outcome = evaluate(
-				dict(evaluation["normalized_facts"] or {}),
-				[dict(requirement) for requirement in requirements.mappings().all()],
-			)
+			requirement_list = [dict(requirement) for requirement in requirements.mappings()]
+			outcome = evaluate(dict(evaluation["normalized_facts"] or {}), requirement_list)
+			assessments: Sequence[Assessment] = outcome.assessments
+			if self._openrouter is not None and requirement_list:
+				extraction_blocks = cast(
+					Mapping[str, object],
+					cast(object, evaluation["extraction_blocks"]) or {},
+				)
+				blocks = cast(list[Mapping[str, object]], extraction_blocks.get("blocks", []))
+				try:
+					model_assessments = await assess_requirements(
+						self._openrouter,
+						model=self._settings.openrouter.assessment_model,
+						requirements=requirement_list,
+						blocks=blocks,
+						max_output_tokens=self._settings.openrouter.max_output_tokens,
+					)
+				except OpenRouterError as error:
+					logger.warning(
+						"model assessment failed; using deterministic outcomes",
+						extra={"job_id": job.id, "reason": str(error)},
+					)
+				else:
+					assessments = refine_assessments(
+						assessments, model_assessments, requirement_list
+					)
+					outcome = summarize(assessments, requirement_list)
 			for assessment in outcome.assessments:
 				await connection.execute(
 					text(
