@@ -178,6 +178,32 @@ class ResumeVersion(Base):
     )
 
 
+class ResumeBlockEmbedding(Base):
+	__tablename__ = "resume_block_embedding"
+
+	resume_version_id: Mapped[str] = mapped_column(
+		ForeignKey("resume_version.id", ondelete="CASCADE"), primary_key=True
+	)
+	block_id: Mapped[str] = mapped_column(Text, primary_key=True)
+	model: Mapped[str] = mapped_column(Text, primary_key=True)
+	text_hash: Mapped[str] = mapped_column(Text, nullable=False)
+	vector: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
+class EmbeddingCache(Base):
+	__tablename__ = "embedding_cache"
+
+	model: Mapped[str] = mapped_column(Text, primary_key=True)
+	text_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+	vector: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
 class Job(Base):
     __tablename__ = "job"
     __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_job_organization"),)

@@ -176,3 +176,49 @@ def test_document_file_part_encodes_pdfs_only() -> None:
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	)
 	assert document_file_part("resume.docx", b"PK", docx_type) is None
+
+
+async def test_embed_texts_returns_indexed_vectors() -> None:
+	requests: list[dict[str, object]] = []
+
+	def handler(request: httpx.Request) -> httpx.Response:
+		requests.append(json.loads(request.content))
+		return httpx.Response(
+			200,
+			json={
+				"data": [
+					{"index": 1, "embedding": [0.2, 0.4]},
+					{"index": 0, "embedding": [0.1, 0.3]},
+				]
+			},
+		)
+
+	client = OpenRouterClient(
+		api_key="key",
+		timeout_seconds=5,
+		transport=httpx.MockTransport(handler),
+	)
+	vectors = await client.embed_texts(model="qwen/qwen3-embedding-8b", texts=["a", "b"])
+	assert vectors == [[0.1, 0.3], [0.2, 0.4]]
+	assert requests[0]["model"] == "qwen/qwen3-embedding-8b"
+
+
+async def test_embed_texts_rejects_inconsistent_dimensions() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(
+			200,
+			json={
+				"data": [
+					{"index": 0, "embedding": [0.1]},
+					{"index": 1, "embedding": [0.2, 0.3]},
+				]
+			},
+		)
+
+	client = OpenRouterClient(
+		api_key="key",
+		timeout_seconds=5,
+		transport=httpx.MockTransport(handler),
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a", "b"])

@@ -10,6 +10,7 @@ class OpenRouterSettings:
 	base_url: str
 	extraction_model: str
 	assessment_model: str
+	embedding_model: str
 	timeout_seconds: float
 	max_output_tokens: int
 
@@ -43,6 +44,8 @@ def load_settings() -> WorkerSettings:
 		or "openai/gpt-5-mini",
 		assessment_model=os.environ.get("OPENROUTER_ASSESSMENT_MODEL", "")
 		or "openai/gpt-5-mini",
+		embedding_model=os.environ.get("OPENROUTER_EMBEDDING_MODEL", "")
+		or "qwen/qwen3-embedding-8b",
 		timeout_seconds=float(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "90")),
 		max_output_tokens=int(os.environ.get("OPENROUTER_MAX_OUTPUT_TOKENS", "4096")),
 	)

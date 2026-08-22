@@ -41,7 +41,8 @@ class OpenRouterClient:
 		timeout_seconds: float = 90.0,
 		transport: httpx.AsyncBaseTransport | None = None,
 	) -> None:
-		self._chat_completions_url = base_url.rstrip("/") + "/chat/completions"
+		self._base_url = base_url.rstrip("/")
+		self._chat_completions_url = self._base_url + "/chat/completions"
 		self._timeout_seconds = timeout_seconds
 		self._transport = transport
 		self._headers = {
@@ -81,13 +82,21 @@ class OpenRouterClient:
 		body = await self._post(payload)
 		return parse_json_completion(body)
 
-	async def _post(self, payload: dict[str, object]) -> dict[str, object]:
+	async def embed_texts(self, *, model: str, texts: Sequence[str]) -> list[list[float]]:
+		inputs: list[object] = list(texts)
+		payload = cast(dict[str, object], {"model": model, "input": inputs})
+		body = await self._post(payload, path="/embeddings")
+		return parse_embedding_response(body)
+
+	async def _post(
+		self, payload: dict[str, object], path: str = "/chat/completions"
+	) -> dict[str, object]:
 		try:
 			async with httpx.AsyncClient(
 				timeout=self._timeout_seconds, transport=self._transport
 			) as client:
 				response = await client.post(
-					self._chat_completions_url,
+					self._base_url + path,
 					json=payload,
 					headers=self._headers,
 				)
@@ -148,6 +157,36 @@ def classify_error(error: dict[str, object]) -> OpenRouterError:
 	if code_text in RETRYABLE_ERROR_CODES:
 		return OpenRouterRetryableError(message)
 	return OpenRouterError(message)
+
+
+def parse_embedding_response(body: dict[str, object]) -> list[list[float]]:
+	data = body.get("data")
+	if not isinstance(data, list) or not data:
+		raise OpenRouterError("Embedding response has no data")
+	vectors: list[list[float]] = []
+	for item in cast(list[object], data):
+		if not isinstance(item, dict):
+			raise OpenRouterError("Embedding entry is malformed")
+		entry = cast(dict[str, object], item)
+		index = entry.get("index")
+		embedding = entry.get("embedding")
+		if not isinstance(embedding, list):
+			raise OpenRouterError("Embedding vector is missing")
+		values: list[float] = []
+		for value in cast(list[object], embedding):
+			if not isinstance(value, (int, float)):
+				raise OpenRouterError("Embedding vector is not numeric")
+			values.append(float(value))
+		if not values:
+			raise OpenRouterError("Embedding vector is empty")
+		position = index if isinstance(index, int) else len(vectors)
+		while len(vectors) <= position:
+			vectors.append([])
+		vectors[position] = values
+	dimensions = {len(vector) for vector in vectors}
+	if len(dimensions) != 1:
+		raise OpenRouterError("Embedding vectors have inconsistent dimensions")
+	return vectors
 
 
 def parse_json_completion(body: dict[str, object]) -> dict[str, object]:
