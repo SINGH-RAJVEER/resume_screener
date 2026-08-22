@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import csv
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -10,7 +8,7 @@ from string import ascii_uppercase, digits
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,6 +102,18 @@ class JobRequest(RequestModel):
 class ApplicationWindowRequest(RequestModel):
     opens_at: datetime
     closes_at: datetime
+
+    @field_validator("opens_at", "closes_at", mode="before")
+    @classmethod
+    def _parse_timestamp(cls, value: object) -> object:
+        # Strict pydantic rejects ISO strings during JSON body validation, so
+        # parse them here; FastAPI hands the model already-decoded JSON values.
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError as error:
+                raise ValueError("timestamp must be an ISO 8601 datetime") from error
+        return value
 
 
 class RequirementRequest(RequestModel):
@@ -252,7 +262,11 @@ async def create_organization(input_data: OrganizationRequest, request: Request)
         id=new_id(), organization_id=organization.id, user_id=user.id, role="owner"
     )
     async with store.sessions().begin() as session:
-        session.add_all([organization, member])
+        # Models declare no relationships, so flush parents before children to
+        # guarantee insert order satisfies foreign keys.
+        session.add(organization)
+        await session.flush()
+        session.add(member)
     return {"id": organization.id, "name": organization.name, "role": "owner"}
 
 
@@ -389,7 +403,9 @@ async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]
     )
     async with store.sessions().begin() as session:
         await require_write_membership(session, input_data.organization_id, user.id)
-        session.add_all([job, version])
+        session.add(job)
+        await session.flush()
+        session.add(version)
     return {"id": job.id, "versionId": version.id}
 
 
@@ -488,6 +504,7 @@ async def confirm_requirements(
             confirmed_at=datetime.now(UTC),
         )
         session.add(version)
+        await session.flush()
         for requirement in input_data.requirements:
             session.add(
                 JobRequirement(
@@ -695,9 +712,13 @@ async def upload_resume(
             job_version_id=job_version.id,
             resume_version_id=version.id,
         )
+        await add_resume_chain(
+            session, candidate, document, version, submission, processing, evaluation
+        )
         if invitation is not None:
+            # Set after the chain flush so the update cannot be emitted before
+            # the referenced submission row exists.
             invitation.resume_submission_id = submission.id
-        session.add_all([candidate, document, version, submission, processing, evaluation])
         LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
             document.storage_key, content
         )
@@ -778,7 +799,9 @@ async def upload_resume_batch(
                 job_version_id=job_version.id,
                 resume_version_id=version.id,
             )
-            session.add_all([candidate, document, version, submission, processing, evaluation])
+            await add_resume_chain(
+                session, candidate, document, version, submission, processing, evaluation
+            )
             storage.put(document.storage_key, entry.content)
             accepted.append(
                 {
@@ -1062,6 +1085,29 @@ async def latest_job_version(session: AsyncSession, job_id: str) -> JobVersion:
         )
     ).scalar_one()
     return version
+
+
+async def add_resume_chain(
+    session: AsyncSession,
+    candidate: CandidateRecord,
+    document: ResumeDocument,
+    version: ResumeVersion,
+    submission: ResumeSubmission,
+    processing: ProcessingJob,
+    evaluation: Evaluation,
+) -> None:
+    # Models declare no relationships, so flush each parent before its
+    # dependent rows to guarantee insert order satisfies foreign keys.
+    session.add(candidate)
+    await session.flush()
+    session.add(document)
+    await session.flush()
+    session.add(version)
+    await session.flush()
+    session.add(submission)
+    await session.flush()
+    session.add(processing)
+    session.add(evaluation)
 
 
 def require_sqlalchemy_store(request: Request) -> SQLAlchemyStore:

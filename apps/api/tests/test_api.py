@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -318,6 +317,30 @@ async def test_request_body_is_limited_to_one_mib() -> None:
         response = await client.post(
             "/api/auth/sign-up/email",
             content=b"{" + b"a" * (1 << 20) + b"}",
+        )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_REQUEST"
+
+
+async def test_application_window_accepts_iso_timestamp_strings() -> None:
+    async with api_client(FakeStore()) as client:
+        response = await client.put(
+            "/api/jobs/job-1/application-window",
+            json={
+                "opens_at": "2026-08-01T09:00:00+00:00",
+                "closes_at": "2026-08-08T17:00:00+00:00",
+            },
+        )
+
+    assert response.status_code == 401
+
+
+async def test_application_window_rejects_non_timestamp_values() -> None:
+    async with api_client(FakeStore()) as client:
+        response = await client.put(
+            "/api/jobs/job-1/application-window",
+            json={"opens_at": 123, "closes_at": "2026-08-08T17:00:00+00:00"},
         )
 
     assert response.status_code == 400
