@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 from secrets import choice, token_urlsafe
 from string import ascii_uppercase, digits
+from typing import cast
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
@@ -986,6 +987,7 @@ async def list_evaluations(
                     .where(RequirementAssessment.evaluation_id == evaluation.id)
                 )
             ).all()
+            block_texts = await resume_block_texts(session, str(evaluation.resume_version_id))
             result.append(
                 {
                     "id": evaluation.id,
@@ -997,17 +999,55 @@ async def list_evaluations(
                     "coverage": evaluation.evidence_coverage,
                     "eligibility": evaluation.eligibility,
                     "assessments": [
-                        {
-                            "requirement": requirement.normalized_text,
-                            "outcome": assessment.outcome,
-                            "reasoning": assessment.reasoning,
-                            "evidence": assessment.evidence,
-                        }
+                        assessment_payload(
+                            assessment, requirement, block_texts
+                        )
                         for assessment, requirement in assessments
                     ],
                 }
             )
         return result
+
+
+async def resume_block_texts(
+    session: AsyncSession, version_id: str
+) -> dict[str, str]:
+    version = await session.get(ResumeVersion, version_id)
+    extraction: dict[str, object] = dict(version.extraction_blocks or {}) if version else {}
+    raw_blocks = extraction.get("blocks")
+    blocks = cast(list[object], raw_blocks) if isinstance(raw_blocks, list) else None
+    texts: dict[str, str] = {}
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        entry = cast(dict[str, object], block)
+        block_id = entry.get("id")
+        if block_id:
+            texts[str(block_id)] = str(entry.get("text", ""))
+    return texts
+
+
+def assessment_payload(
+    assessment: RequirementAssessment,
+    requirement: JobRequirement,
+    block_texts: dict[str, str],
+) -> dict[str, object]:
+    semantic = assessment.semantic_evidence
+    if isinstance(semantic, dict):
+        matches = semantic.get("matches")
+        if isinstance(matches, list):
+            for entry in cast(list[object], matches):
+                if not isinstance(entry, dict):
+                    continue
+                match: dict[str, object] = dict(cast(dict[str, object], entry))
+                match["text"] = block_texts.get(str(match.get("blockId")), "")
+    return {
+        "requirement": requirement.normalized_text,
+        "outcome": assessment.outcome,
+        "reasoning": assessment.reasoning,
+        "evidence": assessment.evidence,
+        "semanticEvidence": semantic,
+    }
 
 
 @router.get("/api/jobs/{job_id}/evaluations.csv")

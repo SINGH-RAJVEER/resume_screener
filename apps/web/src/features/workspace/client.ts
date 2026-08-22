@@ -55,6 +55,14 @@ export interface Evaluation {
 		outcome: "met" | "partial" | "not_met" | "unknown";
 		reasoning: string;
 		evidence: Array<{ blockId: string; quote: string }>;
+		semanticEvidence?: {
+			model: string;
+			matches: Array<{
+				blockId: string;
+				similarity: number;
+				text?: string;
+			}>;
+		} | null;
 	}>;
 }
 

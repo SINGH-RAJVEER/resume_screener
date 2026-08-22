@@ -1603,6 +1603,26 @@ const EvidenceDrawer = ({
 							))}
 						</div>
 					)}
+					{assessment.semanticEvidence?.matches?.length ? (
+						<div className="assessment-evidence">
+							<p className="eyebrow">Related passages</p>
+							{assessment.semanticEvidence.matches.map(
+								(match) => (
+									<blockquote
+										className="evidence-quote"
+										key={`semantic-${match.blockId}`}
+									>
+										{match.text || match.blockId}
+										<cite>
+											Similarity{" "}
+											{Math.round(match.similarity * 100)}
+											%
+										</cite>
+									</blockquote>
+								),
+							)}
+						</div>
+					) : null}
 				</div>
 			))
 		)}
