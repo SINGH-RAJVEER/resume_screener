@@ -1,4 +1,3 @@
-import { Badge } from "@resume-screener/ui/components/badge";
 import { Button } from "@resume-screener/ui/components/button";
 import { Input } from "@resume-screener/ui/components/input";
 import { Label } from "@resume-screener/ui/components/label";
@@ -8,27 +7,29 @@ import {
 	CheckCircle2,
 	ChevronRight,
 	Copy,
+	Download,
 	FileText,
-	Filter,
 	Link as LinkIcon,
+	LoaderCircle,
 	Plus,
-	Search,
-	Sliders,
-	Sparkles,
 	UploadCloud,
-	Users,
 	X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
+	type EvaluationFilters,
 	type Job,
 	type JobDetail,
 	type Organization,
 	type Requirement,
 	workspaceClient,
 } from "./client";
+
+type TabName = "results" | "criteria" | "upload";
+
+type EligibilityFilter = "all" | Evaluation["eligibility"];
 
 const draftsToRequirements = (job: JobDetail): Requirement[] =>
 	job.draftRequirements.map((requirement) => ({
@@ -37,6 +38,46 @@ const draftsToRequirements = (job: JobDetail): Requirement[] =>
 		weight: 2,
 	}));
 
+const eligibilityChipClass = (
+	eligibility: Evaluation["eligibility"],
+): string =>
+	eligibility === "eligible"
+		? "status-chip chip-solid"
+		: eligibility === "needs_review"
+			? "status-chip chip-outline"
+			: eligibility === "not_eligible"
+				? "status-chip chip-soft"
+				: "status-chip chip-muted";
+
+const outcomeChipClass = (
+	outcome: Evaluation["assessments"][number]["outcome"],
+): string =>
+	outcome === "met"
+		? "status-chip chip-solid"
+		: outcome === "partial"
+			? "status-chip chip-outline"
+			: outcome === "not_met"
+				? "status-chip chip-soft"
+				: "status-chip chip-muted";
+
+type OverlayProps = {
+	onDismiss: () => void;
+	labelledBy: string;
+};
+
+const overlayBackdrop = ({ onDismiss, labelledBy }: OverlayProps) => ({
+	"aria-labelledby": labelledBy,
+	"aria-modal": true as const,
+	className: "modal-backdrop",
+	onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+		if (event.target === event.currentTarget) onDismiss();
+	},
+	onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+		if (event.key === "Escape") onDismiss();
+	},
+	role: "dialog" as const,
+});
+
 export const Workspace = () => {
 	const { data: session, isPending } = authClient.useSession();
 	const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -44,9 +85,7 @@ export const Workspace = () => {
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [jobSearch, setJobSearch] = useState("");
 	const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
-	const [activeTab, setActiveTab] = useState<
-		"results" | "criteria" | "upload"
-	>("results");
+	const [activeTab, setActiveTab] = useState<TabName>("results");
 	const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
 	const [inspectingEvaluation, setInspectingEvaluation] =
 		useState<Evaluation | null>(null);
@@ -61,65 +100,50 @@ export const Workspace = () => {
 	const [invitationToken, setInvitationToken] = useState<string | null>(null);
 	const [copiedInvitation, setCopiedInvitation] = useState(false);
 	const [evaluationQuery, setEvaluationQuery] = useState("");
-	const [evaluationFilter, setEvaluationFilter] = useState("eligible");
+	const [eligibilityFilter, setEligibilityFilter] =
+		useState<EligibilityFilter>("all");
+	const [minimumScoreText, setMinimumScoreText] = useState("");
 	const [notice, setNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	const loadOrganizations = async () => {
-		const records = await workspaceClient.organizations();
-		setOrganizations(records);
-		setOrganizationId((current) => current || records[0]?.id || "");
-	};
+	const reportError = useCallback((reason: unknown) => {
+		setNotice(null);
+		setError(reason instanceof Error ? reason.message : "Request failed");
+	}, []);
 
-	const loadJobs = async (id: string) => {
-		if (!id) return;
-		const list = await workspaceClient.jobs(id);
-		setJobs(list);
-		const firstJob = list[0];
-		if (firstJob && (!selectedJob || selectedJob.organizationId !== id)) {
-			await openJob(firstJob);
-		} else if (list.length === 0) {
-			setSelectedJob(null);
-		}
-	};
-
-	useEffect(() => {
-		if (!session?.user) return;
-		void workspaceClient
-			.organizations()
-			.then((records) => {
-				setOrganizations(records);
-				const defaultId = records[0]?.id || "";
-				setOrganizationId(defaultId);
-			})
-			.catch((reason: unknown) => {
-				setNotice(null);
-				setError(
-					reason instanceof Error ? reason.message : "Request failed",
-				);
-			});
-	}, [session?.user]);
-
-	useEffect(() => {
-		if (!organizationId) return;
-		setInvitationToken(null);
+	const closeOverlays = useCallback(() => {
+		setIsCreateOrgOpen(false);
+		setIsCreateJobOpen(false);
 		setInspectingEvaluation(null);
-		void workspaceClient
-			.jobs(organizationId)
-			.then(async (list) => {
-				setJobs(list);
-				const firstJob = list[0];
-				if (!firstJob) {
-					setSelectedJob(null);
-					setEvaluations([]);
-					return;
-				}
-				const [detail, jobEvaluations] = await Promise.all([
-					workspaceClient.job(firstJob.id),
-					workspaceClient.evaluations(firstJob.id),
-				]);
+	}, []);
+
+	const refreshEvaluations = useCallback(
+		async (jobId: string) => {
+			const filters: EvaluationFilters = {};
+			if (eligibilityFilter !== "all") {
+				filters.eligibility = [eligibilityFilter];
+			}
+			const parsedScore = Number(minimumScoreText);
+			if (
+				minimumScoreText.trim() !== "" &&
+				Number.isFinite(parsedScore)
+			) {
+				filters.minimumScore = Math.min(
+					100,
+					Math.max(0, Math.round(parsedScore)),
+				);
+			}
+			setEvaluations(await workspaceClient.evaluations(jobId, filters));
+		},
+		[eligibilityFilter, minimumScoreText],
+	);
+
+	const openJob = useCallback(
+		async (job: Job) => {
+			try {
+				const detail = await workspaceClient.job(job.id);
 				setSelectedJob(detail);
-				setEvaluations(jobEvaluations);
+				setInspectingEvaluation(null);
 				setRequirements(
 					detail.requirements.length
 						? detail.requirements.map((requirement) => ({
@@ -131,37 +155,90 @@ export const Workspace = () => {
 						: draftsToRequirements(detail),
 				);
 				setActiveTab(detail.confirmed ? "results" : "criteria");
+			} catch (reason) {
+				reportError(reason);
+			}
+		},
+		[reportError],
+	);
+
+	useEffect(() => {
+		if (!session?.user) return;
+		void workspaceClient
+			.organizations()
+			.then((records) => {
+				setOrganizations(records);
+				setOrganizationId(records[0]?.id ?? "");
 			})
-			.catch((reason: unknown) => {
-				setNotice(null);
-				setError(
-					reason instanceof Error ? reason.message : "Request failed",
-				);
-			});
-	}, [organizationId]);
+			.catch(reportError);
+	}, [session?.user, reportError]);
+
+	useEffect(() => {
+		if (!organizationId) return;
+		setInvitationToken(null);
+		setSelectedJob(null);
+		setInspectingEvaluation(null);
+		void workspaceClient
+			.jobs(organizationId)
+			.then(async (list) => {
+				setJobs(list);
+				const firstJob = list[0];
+				if (firstJob) await openJob(firstJob);
+			})
+			.catch(reportError);
+	}, [organizationId, openJob, reportError]);
+
+	useEffect(() => {
+		if (!selectedJob) return;
+		void refreshEvaluations(selectedJob.id).catch(reportError);
+	}, [selectedJob, refreshEvaluations, reportError]);
+
+	const hasPendingEvaluations = evaluations.some(
+		(evaluation) => evaluation.status !== "complete",
+	);
+
+	useEffect(() => {
+		if (!selectedJob || !hasPendingEvaluations) return;
+		const jobId = selectedJob.id;
+		const interval = window.setInterval(() => {
+			void refreshEvaluations(jobId).catch(() => {});
+		}, 3_000);
+		return () => window.clearInterval(interval);
+	}, [selectedJob, hasPendingEvaluations, refreshEvaluations]);
+
+	const overlayOpen =
+		isCreateOrgOpen || isCreateJobOpen || inspectingEvaluation !== null;
+
+	useEffect(() => {
+		if (!overlayOpen) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") closeOverlays();
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [overlayOpen, closeOverlays]);
 
 	if (isPending) {
 		return (
-			<main className="app-shell flex items-center justify-center p-8">
-				<div className="flex flex-col items-center gap-3 text-muted-foreground">
-					<Sparkles className="size-6 animate-pulse text-accent" />
-					<p className="text-sm font-mono">Loading workspace...</p>
-				</div>
+			<main className="workspace-page">
+				<p className="empty-state">Loading workspace...</p>
 			</main>
 		);
 	}
 
 	if (!session?.user) {
 		return (
-			<main className="app-shell flex items-center justify-center p-8">
-				<div className="text-center space-y-4 max-w-sm">
-					<p className="font-serif text-2xl">
-						Sign in to access workspace
-					</p>
-					<Button asChild className="w-full">
-						<a href="/sign-in">Sign in</a>
-					</Button>
-				</div>
+			<main className="workspace-page">
+				<section className="auth-page">
+					<div className="auth-panel">
+						<h1 style={{ fontSize: "1.5rem", fontWeight: 400 }}>
+							Sign in to access the employer workspace
+						</h1>
+						<Button asChild className="w-full">
+							<a href="/sign-in">Sign in</a>
+						</Button>
+					</div>
+				</section>
 			</main>
 		);
 	}
@@ -176,7 +253,7 @@ export const Workspace = () => {
 				await workspaceClient.createOrganization(organizationName);
 			setOrganizationName("");
 			setIsCreateOrgOpen(false);
-			await loadOrganizations();
+			setOrganizations((current) => [...current, organization]);
 			setOrganizationId(organization.id);
 			setNotice("Employer organization created.");
 		} catch (reason) {
@@ -200,32 +277,10 @@ export const Workspace = () => {
 			setDescription("");
 			setIsCreateJobOpen(false);
 			setActiveTab("criteria");
-			await loadJobs(organizationId);
+			setJobs(await workspaceClient.jobs(organizationId));
 			setNotice(
-				"Job created with extracted criteria. Confirm them to enable resume evaluations.",
+				"Role created with draft criteria. Confirm them to enable resume evaluations.",
 			);
-		} catch (reason) {
-			reportError(reason);
-		}
-	};
-
-	const openJob = async (job: Job) => {
-		try {
-			const detail = await workspaceClient.job(job.id);
-			setSelectedJob(detail);
-			const evals = await workspaceClient.evaluations(job.id);
-			setEvaluations(evals);
-			setInspectingEvaluation(null);
-			setRequirements(
-				detail.requirements.length
-					? detail.requirements.map((requirement) => ({
-							...requirement,
-							normalizedText:
-								requirement.text ?? requirement.normalizedText,
-						}))
-					: draftsToRequirements(detail),
-			);
-			setActiveTab(detail.confirmed ? "results" : "criteria");
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -240,9 +295,8 @@ export const Workspace = () => {
 			);
 			const updated = await workspaceClient.job(selectedJob.id);
 			setSelectedJob(updated);
-			await loadJobs(organizationId);
 			setNotice(
-				"Requirements confirmed. Resume submissions are ready to process.",
+				"Requirements confirmed into a new immutable version. Submissions are scored against it.",
 			);
 			setActiveTab("results");
 		} catch (reason) {
@@ -259,7 +313,7 @@ export const Workspace = () => {
 			);
 			if (hasArchive && resumes.length !== 1) {
 				setError(
-					"Upload one ZIP archive or one or more resume documents.",
+					"Upload one ZIP archive, or one or more resume documents.",
 				);
 				return;
 			}
@@ -273,12 +327,10 @@ export const Workspace = () => {
 				: await workspaceClient.uploadResumes(selectedJob.id, resumes);
 			setResumes([]);
 			setUploadInputKey((current) => current + 1);
-			const updatedEvals = await workspaceClient.evaluations(
-				selectedJob.id,
-			);
-			setEvaluations(updatedEvals);
+			await refreshEvaluations(selectedJob.id);
+			setActiveTab("results");
 			setNotice(
-				`${result.accepted.length} resume${result.accepted.length === 1 ? "" : "s"} queued.${result.rejected.length ? ` ${result.rejected.length} rejected.` : ""}`,
+				`${result.accepted.length} resume${result.accepted.length === 1 ? "" : "s"} queued.`,
 			);
 			if (result.rejected.length) {
 				setError(
@@ -290,7 +342,6 @@ export const Workspace = () => {
 						.join(" "),
 				);
 			}
-			setActiveTab("results");
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -299,9 +350,11 @@ export const Workspace = () => {
 	const handleCreateInvitation = async () => {
 		if (!selectedJob) return;
 		try {
-			const inv = await workspaceClient.createInvitation(selectedJob.id);
-			setInvitationToken(inv.token);
-			setNotice("Invitation token generated.");
+			const invitation = await workspaceClient.createInvitation(
+				selectedJob.id,
+			);
+			setInvitationToken(invitation.token);
+			setNotice("Single-use invitation link created.");
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -312,21 +365,24 @@ export const Workspace = () => {
 		const link = `${window.location.origin}/apply/${invitationToken}`;
 		void navigator.clipboard.writeText(link);
 		setCopiedInvitation(true);
-		setTimeout(() => setCopiedInvitation(false), 2000);
+		setTimeout(() => setCopiedInvitation(false), 2_000);
+	};
+
+	const exportCsv = async () => {
+		if (!selectedJob) return;
+		try {
+			await workspaceClient.exportEvaluationsCsv(selectedJob.id);
+		} catch (reason) {
+			reportError(reason);
+		}
 	};
 
 	const visibleEvaluations = evaluations.filter((evaluation) => {
 		const query = evaluationQuery.trim().toLowerCase();
-		const matchesQuery =
-			!query ||
-			(evaluation.candidateName ?? "Candidate")
-				.toLowerCase()
-				.includes(query);
-		const matchesFilter =
-			evaluationFilter === "all" ||
-			evaluation.eligibility === evaluationFilter ||
-			evaluation.status === evaluationFilter;
-		return matchesQuery && matchesFilter;
+		if (!query) return true;
+		return `${evaluation.candidateName ?? ""} ${evaluation.candidateEmail ?? ""}`
+			.toLowerCase()
+			.includes(query);
 	});
 
 	const filteredJobs = jobs.filter((job) =>
@@ -338,30 +394,21 @@ export const Workspace = () => {
 	};
 
 	return (
-		<div className="min-h-screen bg-[var(--bone)] text-[var(--ink)] flex flex-col font-sans">
-			{/* Top Header */}
-			<header className="border-b border-[var(--ink)] bg-[var(--bone)] sticky top-0 z-30 px-6 py-3 flex items-center justify-between gap-4">
-				<div className="flex items-center gap-6">
-					<a href="/" className="brand-mark flex items-center gap-2">
-						<span className="size-7 rounded-sm border border-[var(--ink)] inline-flex items-center justify-center font-serif italic text-xs">
-							rs
-						</span>
-						<span className="font-mono text-xs tracking-wider uppercase font-bold">
-							resume screener
-						</span>
+		<div className="workspace-page">
+			<header className="workspace-header">
+				<div className="workspace-header-left">
+					<a href="/" className="brand-mark">
+						<span>rs</span>
+						<span className="brand-name">resume screener</span>
 					</a>
-
-					<div className="h-4 w-px bg-[var(--rule)]" />
-
-					{/* Organization Dropdown / Selector */}
-					<div className="flex items-center gap-2">
-						<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-							Org
-						</span>
+					<div className="workspace-org">
+						<span>Organization</span>
 						<select
+							aria-label="Employer organization"
+							onChange={(event) =>
+								setOrganizationId(event.target.value)
+							}
 							value={organizationId}
-							onChange={(e) => setOrganizationId(e.target.value)}
-							className="bg-transparent text-xs font-semibold border border-[var(--rule)] rounded px-2.5 py-1 focus:border-[var(--ink)] outline-none"
 						>
 							{organizations.map((org) => (
 								<option key={org.id} value={org.id}>
@@ -370,795 +417,279 @@ export const Workspace = () => {
 							))}
 						</select>
 						<Button
-							size="xs"
-							variant="outline"
 							onClick={() => setIsCreateOrgOpen(true)}
-							className="h-7 text-xs font-mono"
+							size="sm"
+							variant="outline"
 						>
-							<Plus className="size-3 mr-1" /> New Org
+							<Plus />
+							New
 						</Button>
 					</div>
 				</div>
-
-				<div className="flex items-center gap-5">
-					<div className="hidden sm:flex items-center gap-3 font-mono text-[11px] uppercase text-[var(--muted)]">
-						<div className="flex items-center gap-1.5">
-							<span className="size-2 rounded-full bg-emerald-600" />
-							<span>Employer workspace</span>
-						</div>
-					</div>
-
-					<div className="flex items-center gap-3 pl-4 border-l border-[var(--rule)]">
-						<span className="font-mono text-xs font-medium">
-							{session.user.name || session.user.email}
-						</span>
-						<Button
-							size="xs"
-							variant="outline"
-							onClick={() => authClient.signOut()}
-							className="font-mono text-[11px] h-7"
-						>
-							Sign out
-						</Button>
-					</div>
+				<div className="workspace-header-right">
+					<span>{session.user.name || session.user.email}</span>
+					<Button
+						onClick={() => authClient.signOut()}
+						size="sm"
+						variant="outline"
+					>
+						Sign out
+					</Button>
 				</div>
 			</header>
 
-			{/* Notices / Banners */}
 			{notice && (
-				<div className="bg-[var(--soft)] border-b border-[var(--rule)] px-6 py-2 flex items-center justify-between text-xs font-mono">
+				<div className="workspace-banner">
 					<span>{notice}</span>
 					<button
-						type="button"
+						aria-label="Dismiss notice"
+						className="icon-button"
 						onClick={() => setNotice(null)}
-						className="text-[var(--muted)] hover:text-[var(--ink)]"
+						type="button"
 					>
-						<X className="size-3.5" />
+						<X />
 					</button>
 				</div>
 			)}
 			{error && (
-				<div className="bg-rose-50 text-rose-800 border-b border-rose-200 px-6 py-2 flex items-center justify-between text-xs font-mono">
+				<div className="workspace-banner banner-error">
 					<span>{error}</span>
 					<button
-						type="button"
+						aria-label="Dismiss error"
+						className="icon-button"
 						onClick={() => setError(null)}
-						className="text-rose-500 hover:text-rose-800"
+						type="button"
 					>
-						<X className="size-3.5" />
+						<X />
 					</button>
 				</div>
 			)}
 
-			{/* Main Workspace Layout */}
-			<div className="flex-1 grid grid-cols-1 md:grid-cols-[300px_1fr] min-h-[calc(100vh-50px)]">
-				{/* Left Sidebar: Job Library */}
-				<aside className="border-r border-[var(--rule)] bg-[var(--bone)] p-4 flex flex-col gap-4">
-					<div className="flex items-center justify-between">
-						<div>
-							<h2 className="font-serif text-lg font-normal">
-								Roles
-							</h2>
-							<p className="text-[11px] font-mono text-[var(--muted)] uppercase">
-								{jobs.length} total roles
-							</p>
-						</div>
-						<Button
-							size="sm"
-							onClick={startCreateJob}
-							className="h-8 font-mono text-xs bg-[var(--ink)] text-[var(--bone)] hover:bg-[var(--accent)]"
-						>
-							<Plus className="size-3.5 mr-1" /> New Job
+			<div className="workspace-layout">
+				<aside className="workspace-aside">
+					<div className="workspace-aside-head">
+						<h2>Roles</h2>
+						<Button onClick={startCreateJob} size="sm">
+							<Plus />
+							New role
 						</Button>
 					</div>
-
-					<div className="relative">
-						<Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+					<div>
 						<Input
-							value={jobSearch}
-							onChange={(e) => setJobSearch(e.target.value)}
+							aria-label="Search roles"
+							onChange={(event) =>
+								setJobSearch(event.target.value)
+							}
 							placeholder="Search roles..."
-							className="h-8 pl-8 text-xs bg-white/40 border-[var(--rule)]"
+							value={jobSearch}
 						/>
 					</div>
-
-					{/* Job List */}
-					<div className="flex-1 overflow-y-auto space-y-1">
-						{filteredJobs.map((job) => {
-							const isSelected = selectedJob?.id === job.id;
-							return (
-								<button
-									key={job.id}
-									type="button"
-									onClick={() => void openJob(job)}
-									className={`w-full text-left p-2.5 rounded transition-colors flex items-start justify-between gap-2 border ${
-										isSelected
-											? "bg-white border-[var(--ink)] shadow-xs"
-											: "border-transparent hover:bg-white/50"
-									}`}
-								>
-									<div className="min-w-0 space-y-1">
-										<p className="text-xs font-semibold truncate leading-tight">
-											{job.title}
-										</p>
-										<div className="flex items-center gap-2">
-											<span
-												className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase ${
-													job.confirmed
-														? "text-emerald-700 font-medium"
-														: "text-amber-700"
-												}`}
-											>
-												<span
-													className={`size-1.5 rounded-full ${
-														job.confirmed
-															? "bg-emerald-600"
-															: "bg-amber-500"
-													}`}
-												/>
-												{job.confirmed
-													? "Confirmed"
-													: "Draft"}
-											</span>
-										</div>
-									</div>
-									<ChevronRight className="size-3.5 text-[var(--muted)] shrink-0 mt-0.5" />
-								</button>
-							);
-						})}
-
+					<nav aria-label="Roles" className="role-list">
+						{filteredJobs.map((job) => (
+							<button
+								key={job.id}
+								className={`role-item${
+									selectedJob?.id === job.id ? " active" : ""
+								}`}
+								onClick={() => void openJob(job)}
+								type="button"
+							>
+								<span>
+									<span className="role-item-name">
+										{job.title}
+									</span>
+									<span className="role-item-meta">
+										{job.confirmed
+											? "confirmed"
+											: "draft criteria"}
+									</span>
+								</span>
+								<ChevronRight aria-hidden />
+							</button>
+						))}
 						{filteredJobs.length === 0 && (
-							<div className="p-6 text-center text-xs text-[var(--muted)] space-y-2 border border-dashed border-[var(--rule)] rounded">
-								<Briefcase className="size-5 mx-auto text-[var(--muted)]" />
-								<p>No jobs found.</p>
-								<Button
-									size="xs"
-									variant="outline"
-									onClick={startCreateJob}
-								>
-									Create Role
-								</Button>
-							</div>
+							<p className="muted-copy">
+								No roles yet. Create one to start screening.
+							</p>
 						)}
-					</div>
+					</nav>
 				</aside>
 
-				{/* Right Main Stage: Selected Job Workspace */}
-				<main className="p-6 overflow-y-auto flex flex-col gap-6">
+				<main className="workspace-main">
 					{selectedJob ? (
-						<>
-							{/* Job Header & Actions */}
-							<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--rule)]">
-								<div className="space-y-1">
-									<div className="flex items-center gap-2">
-										<h1 className="font-serif text-2xl font-normal leading-tight">
-											{selectedJob.title}
-										</h1>
-										<Badge
-											variant={
+						<div className="workspace-stage">
+							<div className="job-head">
+								<div>
+									<div className="job-title-row">
+										<h1>{selectedJob.title}</h1>
+										<span
+											className={
 												selectedJob.confirmed
-													? "success"
-													: "warning"
+													? "status-chip chip-solid"
+													: "status-chip chip-outline"
 											}
-											className="font-mono text-[10px] uppercase tracking-wider"
 										>
 											{selectedJob.confirmed
-												? "Requirements Confirmed"
-												: "Needs Confirmation"}
-										</Badge>
+												? "requirements confirmed"
+												: "needs confirmation"}
+										</span>
 									</div>
-									<p className="text-xs text-[var(--muted)] font-mono">
+									<p className="job-meta">
 										{currentOrg?.name} ·{" "}
-										{evaluations.length} candidate
-										submissions evaluated
+										{evaluations.length} submission
+										{evaluations.length === 1 ? "" : "s"}{" "}
+										evaluated
 									</p>
 								</div>
-
-								{/* Header Action Bar */}
-								<div className="flex items-center gap-2">
+								<div className="job-actions">
 									<Button
+										onClick={() =>
+											void handleCreateInvitation()
+										}
 										size="sm"
 										variant="outline"
-										onClick={handleCreateInvitation}
-										className="h-8 font-mono text-xs"
 									>
-										<LinkIcon className="size-3.5 mr-1" />{" "}
-										Invite Candidate
+										<LinkIcon />
+										Invite candidate
 									</Button>
 									<Button
-										size="sm"
 										onClick={() => setActiveTab("upload")}
-										className="h-8 font-mono text-xs bg-[var(--ink)] text-[var(--bone)] hover:bg-[var(--accent)]"
+										size="sm"
 									>
-										<UploadCloud className="size-3.5 mr-1" />{" "}
-										Queue Resume
+										<UploadCloud />
+										Queue resumes
 									</Button>
 								</div>
 							</div>
 
-							{/* Invitation Token Card if generated */}
 							{invitationToken && (
-								<div className="bg-white border border-[var(--ink)] p-3 rounded flex items-center justify-between gap-3 text-xs font-mono">
-									<div className="truncate">
-										<span className="text-[var(--muted)] mr-2">
-											Single-use Invitation Link:
-										</span>
-										<code className="bg-[var(--soft)] px-2 py-0.5 rounded">
+								<div className="invitation-strip">
+									<span>
+										Single-use link:{" "}
+										<code>
 											{`${window.location.origin}/apply/${invitationToken}`}
 										</code>
-									</div>
+									</span>
 									<Button
-										size="xs"
-										variant="outline"
 										onClick={copyInvitationLink}
-										className="shrink-0 font-mono text-[11px]"
+										size="sm"
+										variant="outline"
 									>
-										<Copy className="size-3 mr-1" />
-										{copiedInvitation
-											? "Copied"
-											: "Copy Link"}
+										<Copy />
+										{copiedInvitation ? "Copied" : "Copy"}
 									</Button>
 								</div>
 							)}
 
-							{/* Navigation Tabs */}
-							<div className="flex items-center gap-6 border-b border-[var(--rule)] font-mono text-xs uppercase tracking-wider">
+							<nav aria-label="Job sections" className="job-tabs">
 								<button
-									type="button"
+									className={`job-tab${
+										activeTab === "results" ? " active" : ""
+									}`}
 									onClick={() => setActiveTab("results")}
-									className={`pb-2.5 border-b-2 transition-colors flex items-center gap-2 ${
-										activeTab === "results"
-											? "border-[var(--ink)] text-[var(--ink)] font-bold"
-											: "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
-									}`}
+									type="button"
 								>
-									<Users className="size-3.5" />
-									Top Matches ({evaluations.length})
+									Top matches ({evaluations.length})
 								</button>
 								<button
-									type="button"
-									onClick={() => setActiveTab("criteria")}
-									className={`pb-2.5 border-b-2 transition-colors flex items-center gap-2 ${
+									className={`job-tab${
 										activeTab === "criteria"
-											? "border-[var(--ink)] text-[var(--ink)] font-bold"
-											: "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+											? " active"
+											: ""
 									}`}
+									onClick={() => setActiveTab("criteria")}
+									type="button"
 								>
-									<Sliders className="size-3.5" />
-									Criteria & Requirements (
-									{requirements.length})
+									Criteria ({requirements.length})
 								</button>
 								<button
-									type="button"
-									onClick={() => setActiveTab("upload")}
-									className={`pb-2.5 border-b-2 transition-colors flex items-center gap-2 ${
-										activeTab === "upload"
-											? "border-[var(--ink)] text-[var(--ink)] font-bold"
-											: "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+									className={`job-tab${
+										activeTab === "upload" ? " active" : ""
 									}`}
+									onClick={() => setActiveTab("upload")}
+									type="button"
 								>
-									<UploadCloud className="size-3.5" />
-									Upload Resume
+									Upload
 								</button>
-							</div>
+							</nav>
 
-							{/* TAB 1: TOP MATCHES & SUBMISSIONS */}
 							{activeTab === "results" && (
-								<div className="space-y-4">
-									{/* Quick stats strip */}
-									<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-										<div className="p-3 bg-white/60 border border-[var(--rule)] rounded">
-											<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-												Evaluated
-											</span>
-											<p className="font-serif text-xl font-normal">
-												{evaluations.length}
-											</p>
-										</div>
-										<div className="p-3 bg-white/60 border border-[var(--rule)] rounded">
-											<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-												Top Score
-											</span>
-											<p className="font-serif text-xl font-normal">
-												{evaluations.find(
-													(e) => e.score !== null,
-												)?.score ?? "—"}{" "}
-												<span className="text-xs font-mono text-[var(--muted)]">
-													/ 100
-												</span>
-											</p>
-										</div>
-										<div className="p-3 bg-white/60 border border-[var(--rule)] rounded">
-											<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-												Eligible
-											</span>
-											<p className="font-serif text-xl font-normal text-emerald-700">
-												{
-													evaluations.filter(
-														(e) =>
-															e.eligibility ===
-															"eligible",
-													).length
-												}
-											</p>
-										</div>
-										<div className="p-3 bg-white/60 border border-[var(--rule)] rounded">
-											<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-												Needs Review
-											</span>
-											<p className="font-serif text-xl font-normal text-amber-700">
-												{
-													evaluations.filter(
-														(e) =>
-															e.eligibility ===
-															"needs_review",
-													).length
-												}
-											</p>
-										</div>
-									</div>
-
-									{/* Filters Bar */}
-									<div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/40 p-2.5 border border-[var(--rule)] rounded">
-										<div className="relative w-full sm:w-72">
-											<Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-											<Input
-												value={evaluationQuery}
-												onChange={(e) =>
-													setEvaluationQuery(
-														e.target.value,
-													)
-												}
-												placeholder="Search candidate name..."
-												className="h-8 pl-8 text-xs bg-white border-[var(--rule)]"
-											/>
-										</div>
-
-										<div className="flex items-center gap-2 w-full sm:w-auto">
-											<Filter className="size-3.5 text-[var(--muted)]" />
-											<select
-												value={evaluationFilter}
-												onChange={(e) =>
-													setEvaluationFilter(
-														e.target.value,
-													)
-												}
-												className="h-8 text-xs bg-white border border-[var(--rule)] rounded px-2.5 outline-none"
-											>
-												<option value="all">
-													All Outcomes
-												</option>
-												<option value="eligible">
-													Eligible Only
-												</option>
-												<option value="needs_review">
-													Needs Review
-												</option>
-												<option value="not_eligible">
-													Not Eligible
-												</option>
-											</select>
-										</div>
-									</div>
-
-									{/* Candidates Data Table */}
-									<div className="border border-[var(--rule)] bg-white rounded overflow-hidden">
-										<table className="w-full text-left text-xs border-collapse">
-											<thead>
-												<tr className="border-b border-[var(--rule)] bg-[var(--soft)] font-mono text-[10px] uppercase text-[var(--muted)]">
-													<th className="p-3 font-semibold">
-														Candidate
-													</th>
-													<th className="p-3 font-semibold">
-														Fit Score
-													</th>
-													<th className="p-3 font-semibold">
-														Eligibility
-													</th>
-													<th className="p-3 font-semibold">
-														Evidence Coverage
-													</th>
-													<th className="p-3 font-semibold text-right">
-														Action
-													</th>
-												</tr>
-											</thead>
-											<tbody className="divide-y divide-[var(--rule)]">
-												{visibleEvaluations.map(
-													(evaluation) => {
-														const score =
-															evaluation.score;
-														return (
-															<tr
-																key={
-																	evaluation.id
-																}
-																className="hover:bg-[var(--bone)]/40 transition-colors"
-															>
-																<td className="p-3 font-medium">
-																	{evaluation.candidateName ??
-																		"Candidate"}
-																</td>
-																<td className="p-3">
-																	{score !==
-																	null ? (
-																		<span className="font-mono font-bold text-sm">
-																			{
-																				score
-																			}
-																			<span className="text-[10px] text-[var(--muted)] font-normal">
-																				/100
-																			</span>
-																		</span>
-																	) : (
-																		<span className="font-mono text-[var(--muted)]">
-																			Processing
-																		</span>
-																	)}
-																</td>
-																<td className="p-3">
-																	<Badge
-																		variant={
-																			evaluation.eligibility ===
-																			"eligible"
-																				? "success"
-																				: evaluation.eligibility ===
-																						"needs_review"
-																					? "warning"
-																					: "destructive"
-																		}
-																		className="font-mono text-[10px] uppercase"
-																	>
-																		{evaluation.eligibility.replace(
-																			"_",
-																			" ",
-																		)}
-																	</Badge>
-																</td>
-																<td className="p-3 font-mono text-xs">
-																	{evaluation.coverage !==
-																	null
-																		? `${Math.round(evaluation.coverage * 100)}%`
-																		: "—"}
-																</td>
-																<td className="p-3 text-right">
-																	<Button
-																		size="xs"
-																		variant="outline"
-																		onClick={() =>
-																			setInspectingEvaluation(
-																				evaluation,
-																			)
-																		}
-																		className="font-mono text-[11px]"
-																	>
-																		Inspect
-																		Evidence
-																	</Button>
-																</td>
-															</tr>
-														);
-													},
-												)}
-
-												{visibleEvaluations.length ===
-													0 && (
-													<tr>
-														<td
-															colSpan={5}
-															className="p-8 text-center text-xs text-[var(--muted)]"
-														>
-															{evaluations.length ===
-															0 ? (
-																<div className="space-y-3 max-w-sm mx-auto">
-																	<FileText className="size-6 mx-auto text-[var(--muted)]" />
-																	<p className="font-serif text-base text-[var(--ink)]">
-																		No
-																		candidate
-																		resumes
-																		evaluated
-																		yet
-																	</p>
-																	<p className="text-[11px] font-mono text-[var(--muted)]">
-																		Confirm
-																		criteria
-																		and
-																		upload
-																		candidate
-																		resumes
-																		to run
-																		evidence-backed
-																		comparisons.
-																	</p>
-																	<Button
-																		size="sm"
-																		onClick={() =>
-																			setActiveTab(
-																				"upload",
-																			)
-																		}
-																	>
-																		Queue
-																		Resume
-																	</Button>
-																</div>
-															) : (
-																<p>
-																	No
-																	evaluations
-																	match active
-																	filters.
-																</p>
-															)}
-														</td>
-													</tr>
-												)}
-											</tbody>
-										</table>
-									</div>
-								</div>
+								<ResultsTab
+									evaluations={evaluations}
+									eligibilityFilter={eligibilityFilter}
+									exportCsv={() => void exportCsv()}
+									minimumScoreText={minimumScoreText}
+									onInspect={setInspectingEvaluation}
+									onQueue={() => setActiveTab("upload")}
+									visibleEvaluations={visibleEvaluations}
+									{...{
+										setEligibilityFilter,
+										setEvaluationQuery,
+										setMinimumScoreText,
+									}}
+									evaluationQuery={evaluationQuery}
+								/>
 							)}
 
-							{/* TAB 2: CRITERIA & REQUIREMENTS */}
 							{activeTab === "criteria" && (
-								<div className="space-y-4 max-w-4xl">
-									<div className="p-3.5 bg-white border border-[var(--rule)] rounded text-xs space-y-1">
-										<p className="font-semibold text-[var(--ink)]">
-											Confirm criteria before screening
-											resumes
-										</p>
-										<p className="text-[var(--muted)]">
-											The AI extracts draft criteria from
-											the job description. You can
-											classify criteria as Required
-											(weight 2), Preferred (weight 1), or
-											a Hard Gate (Pass/Fail gate).
-											Confirming creates an immutable
-											version for all scoring.
-										</p>
-									</div>
-
-									<div className="space-y-2">
-										{requirements.map(
-											(requirement, index) => (
-												<div
-													key={requirement.stableId}
-													className="p-3 bg-white border border-[var(--rule)] rounded flex flex-col sm:flex-row items-start sm:items-center gap-3"
-												>
-													<span className="font-mono text-xs text-[var(--muted)] font-bold">
-														{(index + 1)
-															.toString()
-															.padStart(2, "0")}
-													</span>
-													<Input
-														value={
-															requirement.normalizedText ??
-															""
-														}
-														onChange={(e) =>
-															setRequirements(
-																(curr) =>
-																	curr.map(
-																		(
-																			item,
-																			i,
-																		) =>
-																			i ===
-																			index
-																				? {
-																						...item,
-																						normalizedText:
-																							e
-																								.target
-																								.value,
-																					}
-																				: item,
-																	),
-															)
-														}
-														className="flex-1 text-xs"
-														placeholder="Requirement statement..."
-													/>
-													<div className="flex items-center gap-2 shrink-0">
-														<select
-															value={
-																requirement.kind
-															}
-															onChange={(e) =>
-																setRequirements(
-																	(curr) =>
-																		curr.map(
-																			(
-																				item,
-																				i,
-																			) =>
-																				i ===
-																				index
-																					? {
-																							...item,
-																							kind: e
-																								.target
-																								.value as Requirement["kind"],
-																						}
-																					: item,
-																		),
-																)
-															}
-															className="h-9 text-xs border border-[var(--rule)] rounded px-2.5 bg-white outline-none"
-														>
-															<option value="required">
-																Required
-															</option>
-															<option value="preferred">
-																Preferred
-															</option>
-															<option value="hard_gate">
-																Hard Gate
-															</option>
-															<option value="ignored">
-																Ignored
-															</option>
-														</select>
-														<Input
-															type="number"
-															min={1}
-															max={10}
-															value={
-																requirement.weight
-															}
-															onChange={(e) =>
-																setRequirements(
-																	(curr) =>
-																		curr.map(
-																			(
-																				item,
-																				i,
-																			) =>
-																				i ===
-																				index
-																					? {
-																							...item,
-																							weight: Number(
-																								e
-																									.target
-																									.value,
-																							),
-																						}
-																					: item,
-																		),
-																)
-															}
-															className="w-16 h-9 text-xs font-mono text-center"
-															title="Weight (1-10)"
-														/>
-													</div>
-												</div>
+								<CriteriaTab
+									canConfirm={requirements.length > 0}
+									confirmed={selectedJob.confirmed}
+									onAdd={() =>
+										setRequirements((current) => [
+											...current,
+											{
+												stableId: `custom_${Date.now()}`,
+												normalizedText: "",
+												kind: "required",
+												weight: 2,
+											},
+										])
+									}
+									onConfirm={() => void confirm()}
+									onChange={(index, patch) =>
+										setRequirements((current) =>
+											current.map((item, itemIndex) =>
+												itemIndex === index
+													? { ...item, ...patch }
+													: item,
 											),
-										)}
-									</div>
-
-									<div className="flex items-center justify-between pt-2">
-										<Button
-											type="button"
-											variant="outline"
-											size="sm"
-											onClick={() =>
-												setRequirements((curr) => [
-													...curr,
-													{
-														stableId: `custom_${Date.now()}`,
-														normalizedText: "",
-														kind: "required",
-														weight: 2,
-													},
-												])
-											}
-											className="font-mono text-xs"
-										>
-											<Plus className="size-3.5 mr-1" />{" "}
-											Add Criterion
-										</Button>
-
-										<Button
-											onClick={() => void confirm()}
-											disabled={requirements.length === 0}
-											className="bg-[var(--ink)] text-[var(--bone)] hover:bg-[var(--accent)] font-mono text-xs"
-										>
-											<CheckCircle2 className="size-3.5 mr-1" />{" "}
-											Confirm Requirements
-										</Button>
-									</div>
-								</div>
+										)
+									}
+									requirements={requirements}
+								/>
 							)}
 
-							{/* TAB 3: UPLOAD RESUMES */}
 							{activeTab === "upload" && (
-								<div className="max-w-xl space-y-6">
-									{!selectedJob.confirmed && (
-										<div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded text-xs">
-											<strong>Note:</strong> Job criteria
-											are not confirmed yet. Please
-											confirm requirements before
-											screening resumes.
-										</div>
-									)}
-
-									<form
-										onSubmit={upload}
-										className="space-y-4 p-6 bg-white border border-[var(--rule)] rounded"
-									>
-										<h3 className="font-serif text-lg">
-											Queue resume submissions
-										</h3>
-
-										<div className="space-y-1.5">
-											<Label
-												htmlFor="resume-file"
-												className="text-xs"
-											>
-												Resume documents or ZIP archive
-											</Label>
-											<Input
-												id="resume-file"
-												key={uploadInputKey}
-												type="file"
-												accept=".pdf,.docx,.txt,.zip"
-												multiple
-												onChange={(event) =>
-													setResumes(
-														Array.from(
-															event.currentTarget
-																.files ?? [],
-														),
-													)
-												}
-												required
-												className="text-xs file:font-mono file:text-xs"
-											/>
-											<p className="text-[11px] font-mono text-[var(--muted)]">
-												Choose multiple PDF, DOCX, or
-												TXT resumes, or one ZIP archive.
-												Names are extracted from
-												resumes.
-											</p>
-										</div>
-
-										<Button
-											type="submit"
-											disabled={
-												resumes.length === 0 ||
-												!selectedJob.confirmed
-											}
-											className="w-full bg-[var(--ink)] text-[var(--bone)] hover:bg-[var(--accent)] font-mono text-xs"
-										>
-											<UploadCloud className="size-3.5 mr-1" />{" "}
-											Queue {resumes.length || "selected"}{" "}
-											resume
-											{resumes.length === 1 ? "" : "s"}
-										</Button>
-									</form>
-								</div>
+								<UploadTab
+									confirmed={selectedJob.confirmed}
+									onConfirmCriteria={() =>
+										setActiveTab("criteria")
+									}
+									onSubmit={(event) => void upload(event)}
+									resumes={resumes}
+									setResumes={setResumes}
+									uploadInputKey={uploadInputKey}
+								/>
 							)}
-						</>
+						</div>
 					) : (
-						<div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-[var(--muted)] space-y-4">
-							<Briefcase className="size-10 text-[var(--muted)]" />
-							<div className="space-y-1 max-w-sm">
-								<h3 className="font-serif text-xl text-[var(--ink)]">
-									{organizationId
-										? "Select or create a role"
-										: "Create your organization"}
-								</h3>
-								<p className="text-xs text-[var(--muted)] font-mono">
-									{organizationId
-										? "Choose a job from the sidebar to review candidates, inspect evidence, or confirm role criteria."
-										: "An employer organization owns your jobs, candidate submissions, and evaluation points."}
-								</p>
-							</div>
-							<Button size="sm" onClick={startCreateJob}>
-								<Plus className="size-3.5 mr-1" />{" "}
+						<div className="empty-state">
+							<Briefcase aria-hidden />
+							<h3>
 								{organizationId
-									? "Create first role"
+									? "Select a role"
+									: "Create your organization"}
+							</h3>
+							<p>
+								{organizationId
+									? "Choose a role from the sidebar, or create a new one."
+									: "An employer organization owns your roles, submissions, and evaluations."}
+							</p>
+							<Button onClick={startCreateJob} size="sm">
+								<Plus />
+								{organizationId
+									? "New role"
 									: "Create organization"}
 							</Button>
 						</div>
@@ -1166,288 +697,568 @@ export const Workspace = () => {
 				</main>
 			</div>
 
-			{/* Modal: Create Organization */}
 			{isCreateOrgOpen && (
 				<div
-					aria-labelledby="create-org-title"
-					aria-modal="true"
-					className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4"
-					role="dialog"
+					{...overlayBackdrop({
+						labelledBy: "create-org-title",
+						onDismiss: () => setIsCreateOrgOpen(false),
+					})}
 				>
-					<div className="bg-white border border-[var(--ink)] p-6 rounded shadow-lg max-w-md w-full space-y-4">
-						<div className="flex items-center justify-between">
-							<h3
-								className="font-serif text-lg"
-								id="create-org-title"
-							>
-								Create Organization
-							</h3>
-							<button
-								type="button"
-								onClick={() => setIsCreateOrgOpen(false)}
-								className="text-[var(--muted)] hover:text-[var(--ink)]"
-							>
-								<X className="size-4" />
-							</button>
+					<form className="modal-panel" onSubmit={createOrganization}>
+						<h3 id="create-org-title">Create organization</h3>
+						<div className="form-field">
+							<Label htmlFor="org-name">Organization name</Label>
+							<Input
+								id="org-name"
+								onChange={(event) =>
+									setOrganizationName(event.target.value)
+								}
+								placeholder="Acme Corp"
+								required
+								value={organizationName}
+							/>
 						</div>
-						<form
-							onSubmit={createOrganization}
-							className="space-y-3"
-						>
-							<div className="space-y-1">
-								<Label htmlFor="org-name" className="text-xs">
-									Organization Name
-								</Label>
-								<Input
-									id="org-name"
-									value={organizationName}
-									onChange={(e) =>
-										setOrganizationName(e.target.value)
-									}
-									placeholder="e.g. Acme Corp"
-									required
-									className="text-xs"
-								/>
-							</div>
-							<div className="flex justify-end gap-2 pt-2">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => setIsCreateOrgOpen(false)}
-								>
-									Cancel
-								</Button>
-								<Button
-									type="submit"
-									size="sm"
-									className="bg-[var(--ink)] text-[var(--bone)]"
-								>
-									Create Org
-								</Button>
-							</div>
-						</form>
-					</div>
+						<div className="modal-actions">
+							<Button
+								onClick={() => setIsCreateOrgOpen(false)}
+								size="sm"
+								variant="outline"
+								type="button"
+							>
+								Cancel
+							</Button>
+							<Button size="sm" type="submit">
+								Create
+							</Button>
+						</div>
+					</form>
 				</div>
 			)}
 
-			{/* Modal: Create Job */}
 			{isCreateJobOpen && (
 				<div
-					aria-labelledby="create-job-dialog-title"
-					aria-modal="true"
-					className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4"
-					role="dialog"
+					{...overlayBackdrop({
+						labelledBy: "create-job-title",
+						onDismiss: () => setIsCreateJobOpen(false),
+					})}
 				>
-					<div className="bg-white border border-[var(--ink)] p-6 rounded shadow-lg max-w-lg w-full space-y-4">
-						<div className="flex items-center justify-between">
-							<h3
-								className="font-serif text-xl"
-								id="create-job-dialog-title"
-							>
-								Create New Role
-							</h3>
-							<button
-								type="button"
-								onClick={() => setIsCreateJobOpen(false)}
-								className="text-[var(--muted)] hover:text-[var(--ink)]"
-							>
-								<X className="size-4" />
-							</button>
+					<form className="modal-panel" onSubmit={createJob}>
+						<h3 id="create-job-title">Create role</h3>
+						<div className="form-field">
+							<Label htmlFor="create-job-title">Role title</Label>
+							<Input
+								id="create-job-title"
+								onChange={(event) =>
+									setJobTitle(event.target.value)
+								}
+								placeholder="Senior Backend Engineer"
+								required
+								value={jobTitle}
+							/>
 						</div>
-						<form onSubmit={createJob} className="space-y-3">
-							<div className="space-y-1">
-								<Label
-									htmlFor="create-job-title"
-									className="text-xs"
-								>
-									Role Title
-								</Label>
-								<Input
-									id="create-job-title"
-									value={jobTitle}
-									onChange={(e) =>
-										setJobTitle(e.target.value)
-									}
-									placeholder="e.g. Senior Frontend Engineer"
-									required
-									className="text-xs"
-								/>
-							</div>
-							<div className="space-y-1">
-								<Label
-									htmlFor="create-job-desc"
-									className="text-xs"
-								>
-									Job Description
-								</Label>
-								<Textarea
-									id="create-job-desc"
-									value={description}
-									onChange={(e) =>
-										setDescription(e.target.value)
-									}
-									placeholder="Paste the full job description. The AI will extract draft criteria automatically..."
-									required
-									className="min-h-36 text-xs font-mono"
-								/>
-							</div>
-							<div className="flex justify-end gap-2 pt-2">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => setIsCreateJobOpen(false)}
-								>
-									Cancel
-								</Button>
-								<Button
-									type="submit"
-									size="sm"
-									className="bg-[var(--ink)] text-[var(--bone)]"
-								>
-									Extract Criteria & Create
-								</Button>
-							</div>
-						</form>
-					</div>
+						<div className="form-field">
+							<Label htmlFor="create-job-description">
+								Job description
+							</Label>
+							<Textarea
+								id="create-job-description"
+								onChange={(event) =>
+									setDescription(event.target.value)
+								}
+								placeholder="Paste the full description. Draft criteria are extracted automatically."
+								required
+								value={description}
+							/>
+						</div>
+						<div className="modal-actions">
+							<Button
+								onClick={() => setIsCreateJobOpen(false)}
+								size="sm"
+								variant="outline"
+								type="button"
+							>
+								Cancel
+							</Button>
+							<Button size="sm" type="submit">
+								Create role
+							</Button>
+						</div>
+					</form>
 				</div>
 			)}
 
-			{/* Evidence Inspection Drawer/Modal */}
 			{inspectingEvaluation && (
 				<div
-					aria-labelledby="evidence-title"
-					aria-modal="true"
-					className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-end"
-					role="dialog"
+					{...overlayBackdrop({
+						labelledBy: "evidence-title",
+						onDismiss: () => setInspectingEvaluation(null),
+					})}
+					className="drawer-backdrop"
 				>
-					<div className="bg-[var(--bone)] border-l border-[var(--ink)] h-full w-full max-w-2xl p-6 overflow-y-auto space-y-6 shadow-2xl">
-						<div className="flex items-start justify-between pb-4 border-b border-[var(--rule)]">
-							<div>
-								<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-									Evidence Inspection
-								</span>
-								<h2
-									className="font-serif text-2xl"
-									id="evidence-title"
-								>
-									{inspectingEvaluation.candidateName ??
-										"Candidate"}
-								</h2>
-								<div className="flex items-center gap-3 mt-2">
-									<span className="font-mono font-bold text-sm">
-										Score:{" "}
-										{inspectingEvaluation.score ??
-											"Pending"}
-										/100
-									</span>
-									<Badge
-										variant={
-											inspectingEvaluation.eligibility ===
-											"eligible"
-												? "success"
-												: inspectingEvaluation.eligibility ===
-														"needs_review"
-													? "warning"
-													: "destructive"
-										}
-										className="font-mono text-[10px] uppercase"
-									>
-										{inspectingEvaluation.eligibility.replace(
-											"_",
-											" ",
-										)}
-									</Badge>
-									<span className="font-mono text-xs text-[var(--muted)]">
-										Coverage:{" "}
-										{inspectingEvaluation.coverage !== null
-											? `${Math.round(inspectingEvaluation.coverage * 100)}%`
-											: "—"}
-									</span>
-								</div>
-							</div>
-							<button
-								type="button"
-								onClick={() => setInspectingEvaluation(null)}
-								className="text-[var(--muted)] hover:text-[var(--ink)] p-1"
-							>
-								<X className="size-5" />
-							</button>
-						</div>
-
-						<div className="space-y-4">
-							<h3 className="font-mono text-xs uppercase tracking-wider text-[var(--muted)]">
-								Requirement Assessments (
-								{inspectingEvaluation.assessments.length})
-							</h3>
-
-							{inspectingEvaluation.assessments.map(
-								(assessment) => (
-									<div
-										key={assessment.requirement}
-										className="p-4 bg-white border border-[var(--rule)] rounded space-y-2.5"
-									>
-										<div className="flex items-start justify-between gap-3">
-											<p className="font-medium text-xs text-[var(--ink)]">
-												{assessment.requirement}
-											</p>
-											<Badge
-												variant={
-													assessment.outcome === "met"
-														? "success"
-														: assessment.outcome ===
-																"partial"
-															? "warning"
-															: "destructive"
-												}
-												className="font-mono text-[10px] uppercase shrink-0"
-											>
-												{assessment.outcome}
-											</Badge>
-										</div>
-
-										<p className="text-xs text-[var(--muted)] leading-relaxed">
-											{assessment.reasoning}
-										</p>
-
-										{assessment.evidence.length > 0 && (
-											<div className="space-y-1.5 pt-1">
-												<span className="font-mono text-[10px] uppercase text-[var(--muted)]">
-													Quoted Resume Evidence:
-												</span>
-												{assessment.evidence.map(
-													(evidence) => (
-														<blockquote
-															key={
-																evidence.blockId
-															}
-															className="border-l-2 border-[var(--accent)] pl-3 py-1 bg-[var(--soft)]/40 text-xs italic font-serif"
-														>
-															“{evidence.quote}”
-															<cite className="block mt-1 font-mono text-[10px] not-italic text-[var(--muted)]">
-																Source block:{" "}
-																{
-																	evidence.blockId
-																}
-															</cite>
-														</blockquote>
-													),
-												)}
-											</div>
-										)}
-									</div>
-								),
-							)}
-						</div>
-					</div>
+					<EvidenceDrawer
+						evaluation={inspectingEvaluation}
+						onClose={() => setInspectingEvaluation(null)}
+					/>
 				</div>
 			)}
 		</div>
 	);
-
-	function reportError(reason: unknown) {
-		setNotice(null);
-		setError(reason instanceof Error ? reason.message : "Request failed");
-	}
 };
+
+type ResultsTabProps = {
+	evaluations: Evaluation[];
+	visibleEvaluations: Evaluation[];
+	evaluationQuery: string;
+	eligibilityFilter: EligibilityFilter;
+	minimumScoreText: string;
+	setEvaluationQuery: (value: string) => void;
+	setEligibilityFilter: (value: EligibilityFilter) => void;
+	setMinimumScoreText: (value: string) => void;
+	exportCsv: () => void;
+	onQueue: () => void;
+	onInspect: (evaluation: Evaluation) => void;
+};
+
+const ResultsTab = ({
+	evaluations,
+	visibleEvaluations,
+	evaluationQuery,
+	eligibilityFilter,
+	minimumScoreText,
+	setEvaluationQuery,
+	setEligibilityFilter,
+	setMinimumScoreText,
+	exportCsv,
+	onQueue,
+	onInspect,
+}: ResultsTabProps) => {
+	const eligibleCount = evaluations.filter(
+		(evaluation) => evaluation.eligibility === "eligible",
+	).length;
+	const reviewCount = evaluations.filter(
+		(evaluation) => evaluation.eligibility === "needs_review",
+	).length;
+	const topScore = evaluations.find(
+		(evaluation) => evaluation.score !== null,
+	)?.score;
+
+	return (
+		<div className="workspace-stage-gap">
+			<div className="stat-strip">
+				<div className="stat">
+					<span>Evaluated</span>
+					<p>{evaluations.length}</p>
+				</div>
+				<div className="stat">
+					<span>Top score</span>
+					<p>{topScore ?? "—"}</p>
+				</div>
+				<div className="stat">
+					<span>Eligible</span>
+					<p>{eligibleCount}</p>
+				</div>
+				<div className="stat">
+					<span>Needs review</span>
+					<p>{reviewCount}</p>
+				</div>
+			</div>
+
+			<div className="filter-bar">
+				<div className="filter-group">
+					<Input
+						aria-label="Search candidates"
+						onChange={(event) =>
+							setEvaluationQuery(event.target.value)
+						}
+						placeholder="Search name or email..."
+						value={evaluationQuery}
+					/>
+					<select
+						aria-label="Filter by eligibility"
+						className="workspace-filter-select"
+						onChange={(event) =>
+							setEligibilityFilter(
+								event.target.value as EligibilityFilter,
+							)
+						}
+						value={eligibilityFilter}
+					>
+						<option value="all">All outcomes</option>
+						<option value="eligible">Eligible</option>
+						<option value="needs_review">Needs review</option>
+						<option value="not_eligible">Not eligible</option>
+					</select>
+					<label className="filter-minimum">
+						Min score
+						<input
+							aria-label="Minimum score"
+							max={100}
+							min={0}
+							onChange={(event) =>
+								setMinimumScoreText(event.target.value)
+							}
+							placeholder="0"
+							type="number"
+							value={minimumScoreText}
+						/>
+					</label>
+				</div>
+				<Button onClick={exportCsv} size="sm" variant="outline">
+					<Download />
+					Export CSV
+				</Button>
+			</div>
+
+			<div className="results-table">
+				<table>
+					<thead>
+						<tr>
+							<th scope="col">Candidate</th>
+							<th scope="col">Score</th>
+							<th scope="col">Eligibility</th>
+							<th scope="col">Evidence coverage</th>
+							<th scope="col">
+								<span className="visually-hidden">Actions</span>
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{visibleEvaluations.map((evaluation) => (
+							<tr key={evaluation.id}>
+								<td>
+									<span style={{ fontWeight: 600 }}>
+										{evaluation.candidateName ??
+											"Candidate"}
+									</span>
+									{evaluation.candidateEmail && (
+										<span className="candidate-email">
+											{evaluation.candidateEmail}
+										</span>
+									)}
+								</td>
+								<td>
+									{evaluation.score !== null ? (
+										<span className="score-cell">
+											{evaluation.score}
+											<span className="score-denominator">
+												/100
+											</span>
+										</span>
+									) : evaluation.status === "complete" ? (
+										<span className="muted-copy">—</span>
+									) : (
+										<span className="pending-cell">
+											<LoaderCircle
+												aria-hidden
+												className="spin"
+											/>
+											Queued
+										</span>
+									)}
+								</td>
+								<td>
+									<span
+										className={eligibilityChipClass(
+											evaluation.eligibility,
+										)}
+									>
+										{evaluation.eligibility.replace(
+											/_/g,
+											" ",
+										)}
+									</span>
+								</td>
+								<td>
+									{evaluation.coverage !== null ? (
+										<span className="coverage-cell">
+											<span
+												aria-hidden
+												className="coverage-meter"
+											>
+												<span
+													className="coverage-meter-fill"
+													style={{
+														width: `${Math.min(100, Math.max(0, evaluation.coverage))}%`,
+													}}
+												/>
+											</span>
+											{evaluation.coverage}%
+										</span>
+									) : (
+										"—"
+									)}
+								</td>
+								<td className="cell-action">
+									<Button
+										onClick={() => onInspect(evaluation)}
+										size="sm"
+										variant="outline"
+									>
+										Inspect
+									</Button>
+								</td>
+							</tr>
+						))}
+						{visibleEvaluations.length === 0 && (
+							<tr>
+								<td colSpan={5}>
+									{evaluations.length === 0 ? (
+										<div className="empty-state">
+											<FileText aria-hidden />
+											<h3>No resumes evaluated yet</h3>
+											<p>
+												Upload resumes or invite
+												candidates once criteria are
+												confirmed.
+											</p>
+											<Button onClick={onQueue} size="sm">
+												<UploadCloud />
+												Queue resumes
+											</Button>
+										</div>
+									) : (
+										<p className="empty-state">
+											No evaluations match the current
+											filters.
+										</p>
+									)}
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	);
+};
+
+type CriteriaTabProps = {
+	requirements: Requirement[];
+	confirmed: boolean;
+	canConfirm: boolean;
+	onChange: (
+		index: number,
+		patch: Partial<Pick<Requirement, "normalizedText" | "kind" | "weight">>,
+	) => void;
+	onAdd: () => void;
+	onConfirm: () => void;
+};
+
+const CriteriaTab = ({
+	requirements,
+	confirmed,
+	canConfirm,
+	onChange,
+	onAdd,
+	onConfirm,
+}: CriteriaTabProps) => (
+	<div className="workspace-stage-gap">
+		<p className="criterion-note">
+			Draft criteria are extracted from the job description. Classify each
+			as required, preferred, ignored, or a hard gate before confirming.
+			Confirming creates an immutable version that all scoring uses.
+		</p>
+		<div className="criterion-list">
+			{requirements.map((requirement, index) => (
+				<div className="criterion-row" key={requirement.stableId}>
+					<span className="criterion-index">
+						{(index + 1).toString().padStart(2, "0")}
+					</span>
+					<Input
+						aria-label={`Requirement ${index + 1} statement`}
+						className="criterion-text"
+						onChange={(event) =>
+							onChange(index, {
+								normalizedText: event.target.value,
+							})
+						}
+						placeholder="Requirement statement..."
+						value={requirement.normalizedText ?? ""}
+					/>
+					<div className="criterion-kind">
+						<select
+							aria-label={`Requirement ${index + 1} kind`}
+							onChange={(event) =>
+								onChange(index, {
+									kind: event.target
+										.value as Requirement["kind"],
+								})
+							}
+							value={requirement.kind}
+						>
+							<option value="required">Required</option>
+							<option value="preferred">Preferred</option>
+							<option value="hard_gate">Hard gate</option>
+							<option value="ignored">Ignored</option>
+						</select>
+						<Input
+							aria-label={`Requirement ${index + 1} weight`}
+							className="weight-input"
+							max={10}
+							min={1}
+							onChange={(event) =>
+								onChange(index, {
+									weight: Number(event.target.value),
+								})
+							}
+							title="Weight (1 to 10)"
+							type="number"
+							value={requirement.weight}
+						/>
+					</div>
+				</div>
+			))}
+		</div>
+		<div className="criteria-actions">
+			<Button onClick={onAdd} size="sm" variant="outline">
+				<Plus />
+				Add criterion
+			</Button>
+			<Button disabled={!canConfirm} onClick={onConfirm} size="sm">
+				<CheckCircle2 />
+				{confirmed ? "Confirm new version" : "Confirm requirements"}
+			</Button>
+		</div>
+	</div>
+);
+
+type UploadTabProps = {
+	confirmed: boolean;
+	resumes: File[];
+	uploadInputKey: number;
+	setResumes: (files: File[]) => void;
+	onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+	onConfirmCriteria: () => void;
+};
+
+const UploadTab = ({
+	confirmed,
+	resumes,
+	uploadInputKey,
+	setResumes,
+	onSubmit,
+	onConfirmCriteria,
+}: UploadTabProps) => (
+	<div className="workspace-stage-gap">
+		{!confirmed && (
+			<div className="upload-warning">
+				Criteria are not confirmed yet.{" "}
+				<button
+					className="link-button"
+					onClick={onConfirmCriteria}
+					type="button"
+				>
+					Confirm criteria first
+				</button>{" "}
+				so uploads are scored against a locked version.
+			</div>
+		)}
+		<form className="upload-panel" onSubmit={onSubmit}>
+			<h3>Queue resume submissions</h3>
+			<div className="form-field">
+				<Label htmlFor="resume-files">Resume documents or ZIP</Label>
+				<Input
+					accept=".pdf,.docx,.txt,.zip"
+					id="resume-files"
+					key={uploadInputKey}
+					multiple
+					onChange={(event) =>
+						setResumes(Array.from(event.currentTarget.files ?? []))
+					}
+					required
+					type="file"
+				/>
+				<p className="form-hint">
+					Choose multiple PDF, DOCX, or TXT files, or exactly one ZIP
+					archive. Candidate names come from the resumes.
+				</p>
+			</div>
+			<Button disabled={resumes.length === 0 || !confirmed} type="submit">
+				<UploadCloud />
+				Queue {resumes.length || "selected"} resume
+				{resumes.length === 1 ? "" : "s"}
+			</Button>
+		</form>
+	</div>
+);
+
+const EvidenceDrawer = ({
+	evaluation,
+	onClose,
+}: {
+	evaluation: Evaluation;
+	onClose: () => void;
+}) => (
+	<div className="drawer-panel">
+		<header className="drawer-head">
+			<div>
+				<p className="eyebrow">Evidence inspection</p>
+				<h2 id="evidence-title">
+					{evaluation.candidateName ?? "Candidate"}
+				</h2>
+				<div className="drawer-stats">
+					<span className="score-cell">
+						{evaluation.score ?? "—"}
+						<span className="score-denominator">/100</span>
+					</span>
+					<span
+						className={eligibilityChipClass(evaluation.eligibility)}
+					>
+						{evaluation.eligibility.replace(/_/g, " ")}
+					</span>
+					{evaluation.candidateEmail && (
+						<span className="muted-copy">
+							{evaluation.candidateEmail}
+						</span>
+					)}
+					{evaluation.candidateLocation && (
+						<span className="muted-copy">
+							{evaluation.candidateLocation}
+						</span>
+					)}
+				</div>
+			</div>
+			<button
+				aria-label="Close evidence inspection"
+				className="icon-button"
+				onClick={onClose}
+				type="button"
+			>
+				<X />
+			</button>
+		</header>
+
+		{(evaluation.assessments ?? []).length === 0 ? (
+			<p className="muted-copy">
+				Evaluations appear here once processing completes.
+			</p>
+		) : (
+			evaluation.assessments.map((assessment) => (
+				<div className="assessment-card" key={assessment.requirement}>
+					<div className="assessment-top">
+						<p>{assessment.requirement}</p>
+						<span className={outcomeChipClass(assessment.outcome)}>
+							{assessment.outcome.replace(/_/g, " ")}
+						</span>
+					</div>
+					<p className="assessment-reasoning">
+						{assessment.reasoning}
+					</p>
+					{assessment.evidence.length > 0 && (
+						<div className="assessment-evidence">
+							{assessment.evidence.map((item) => (
+								<blockquote
+									className="evidence-quote"
+									key={`${item.blockId}-${item.quote}`}
+								>
+									“{item.quote}”
+									<cite>Source block: {item.blockId}</cite>
+								</blockquote>
+							))}
+						</div>
+					)}
+				</div>
+			))
+		)}
+	</div>
+);

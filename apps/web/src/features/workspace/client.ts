@@ -40,13 +40,18 @@ export interface Evaluation {
 	status: string;
 	score: number | null;
 	coverage: number | null;
-	eligibility: string;
+	eligibility: "pending" | "eligible" | "needs_review" | "not_eligible";
 	assessments: Array<{
 		requirement: string;
-		outcome: string;
+		outcome: "met" | "partial" | "not_met" | "unknown";
 		reasoning: string;
 		evidence: Array<{ blockId: string; quote: string }>;
 	}>;
+}
+
+export interface EvaluationFilters {
+	eligibility?: Evaluation["eligibility"][];
+	minimumScore?: number;
 }
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -75,8 +80,35 @@ export const workspaceClient = {
 	jobs: (organizationId: string) =>
 		request<Job[]>(`/api/organizations/${organizationId}/jobs`),
 	job: (jobId: string) => request<JobDetail>(`/api/jobs/${jobId}`),
-	evaluations: (jobId: string) =>
-		request<Evaluation[]>(`/api/jobs/${jobId}/evaluations`),
+	evaluations: (jobId: string, filters: EvaluationFilters = {}) => {
+		const params = new URLSearchParams();
+		for (const value of filters.eligibility ?? []) {
+			params.append("eligibility", value);
+		}
+		if (filters.minimumScore !== undefined) {
+			params.set("minimum_score", String(filters.minimumScore));
+		}
+		const query = params.size ? `?${params.toString()}` : "";
+		return request<Evaluation[]>(`/api/jobs/${jobId}/evaluations${query}`);
+	},
+	exportEvaluationsCsv: async (jobId: string) => {
+		const response = await fetch(
+			`${baseURL}/api/jobs/${jobId}/evaluations.csv`,
+			{
+				headers: {
+					Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
+				},
+			},
+		);
+		if (!response.ok) throw new Error("Export failed");
+		const blob = await response.blob();
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = "evaluations.csv";
+		anchor.click();
+		URL.revokeObjectURL(url);
+	},
 	createJob: (organizationId: string, title: string, description: string) =>
 		request<{ id: string }>("/api/jobs", {
 			method: "POST",
