@@ -30,6 +30,24 @@ export const candidateClient = {
 		request<IndependentEvaluation>(
 			`/api/independent-evaluations/${evaluationId}`,
 		),
+	downloadImprovedResume: async (evaluationId: string) => {
+		const response = await fetch(
+			`${baseURL}/api/independent-evaluations/${evaluationId}/improved-resume`,
+			{
+				headers: {
+					Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
+				},
+			},
+		);
+		if (!response.ok) throw new Error("Corrected resume is not available");
+		const blob = await response.blob();
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = "corrected-resume.docx";
+		anchor.click();
+		URL.revokeObjectURL(url);
+	},
 	independentEvaluations: () =>
 		request<IndependentEvaluation[]>("/api/independent-evaluations"),
 	redeemInvitation: (token: string) =>
@@ -65,6 +83,7 @@ export type IndependentEvaluation = {
 	createdAt: string;
 	completedAt: string | null;
 	jobDescriptionProvided?: boolean;
+	hasImprovedResume?: boolean;
 	suggestions?: Array<{ title: string; detail: string }>;
 	facts?: {
 		skills?: Array<{ canonicalName: string; category?: string | null }>;

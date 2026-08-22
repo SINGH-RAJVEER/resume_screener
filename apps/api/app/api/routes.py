@@ -867,18 +867,37 @@ async def list_independent_evaluations(request: Request) -> list[dict[str, objec
 
 @router.get("/api/independent-evaluations/{evaluation_id}")
 async def independent_evaluation_detail(
-    evaluation_id: str, request: Request
+	evaluation_id: str, request: Request
 ) -> dict[str, object]:
-    user = await require_candidate(request)
-    store = require_sqlalchemy_store(request)
-    async with store.sessions()() as session:
-        evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
-        return {
-            **independent_evaluation_summary(evaluation),
-            "jobDescriptionProvided": evaluation.job_description is not None,
-            "suggestions": evaluation.suggestions or [],
-            "facts": evaluation.normalized_facts or {},
-        }
+	user = await require_candidate(request)
+	store = require_sqlalchemy_store(request)
+	async with store.sessions()() as session:
+		evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+		return {
+			**independent_evaluation_summary(evaluation),
+			"jobDescriptionProvided": evaluation.job_description is not None,
+			"suggestions": evaluation.suggestions or [],
+			"facts": evaluation.normalized_facts or {},
+			"hasImprovedResume": bool(evaluation.improved_resume_key),
+		}
+
+
+@router.get("/api/independent-evaluations/{evaluation_id}/improved-resume")
+async def download_improved_resume(evaluation_id: str, request: Request) -> Response:
+	user = await require_candidate(request)
+	store = require_sqlalchemy_store(request)
+	async with store.sessions().begin() as session:
+		evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+	if not evaluation.improved_resume_key or not evaluation.improved_resume_unlocked_at:
+		raise APIError(404, "NOT_FOUND", "Corrected resume is not available")
+	content = LocalObjectStorage(Path(request.app.state.settings.storage_root)).get(
+		evaluation.improved_resume_key
+	)
+	return Response(
+		content=content,
+		media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		headers={"Content-Disposition": 'attachment; filename="corrected-resume.docx"'},
+	)
 
 
 @router.delete("/api/independent-evaluations/{evaluation_id}", status_code=204)

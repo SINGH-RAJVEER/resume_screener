@@ -239,6 +239,8 @@ const PrivateReport = ({
 	evaluation: IndependentEvaluation;
 	onClose: () => void;
 }) => {
+	const [downloadError, setDownloadError] = useState<string | null>(null);
+
 	if (evaluation.status === "failed") {
 		return (
 			<p className="form-error">
@@ -281,6 +283,29 @@ const PrivateReport = ({
 					{suggestion.detail}
 				</p>
 			))}
+			{evaluation.hasImprovedResume && (
+				<div>
+					<Button
+						onClick={() => {
+							setDownloadError(null);
+							candidateClient
+								.downloadImprovedResume(evaluation.id)
+								.catch(() =>
+									setDownloadError(
+										"Corrected resume could not be downloaded",
+									),
+								);
+						}}
+						size="sm"
+						variant="outline"
+					>
+						Download corrected resume (.docx)
+					</Button>
+					{downloadError && (
+						<p className="form-error">{downloadError}</p>
+					)}
+				</div>
+			)}
 			<Button onClick={onClose} size="sm" variant="outline">
 				Check another resume
 			</Button>
