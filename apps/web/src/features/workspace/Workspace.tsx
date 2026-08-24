@@ -127,8 +127,8 @@ const overlayBackdrop = ({ onDismiss, labelledBy }: OverlayProps) => ({
 
 export const Workspace = () => {
 	const { data: session, isPending } = authClient.useSession();
-	const [organizations, setOrganizations] = useState<Organization[]>([]);
-	const [organizationId, setOrganizationId] = useState("");
+	const [organization, setOrganization] = useState<Organization | null>(null);
+	const organizationId = organization?.id ?? "";
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [jobSearch, setJobSearch] = useState("");
 	const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
@@ -227,10 +227,7 @@ export const Workspace = () => {
 		if (!session?.user) return;
 		void workspaceClient
 			.organizations()
-			.then((records) => {
-				setOrganizations(records);
-				setOrganizationId(records[0]?.id ?? "");
-			})
+			.then((records) => setOrganization(records[0] ?? null))
 			.catch(reportError);
 	}, [session?.user, reportError]);
 
@@ -331,18 +328,17 @@ export const Workspace = () => {
 		);
 	}
 
-	const currentOrg = organizations.find((org) => org.id === organizationId);
+	const currentOrg = organization;
 
 	const createOrganization = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!organizationName.trim()) return;
 		try {
-			const organization =
+			const created =
 				await workspaceClient.createOrganization(organizationName);
 			setOrganizationName("");
 			setIsCreateOrgOpen(false);
-			setOrganizations((current) => [...current, organization]);
-			setOrganizationId(organization.id);
+			setOrganization(created);
 			setNotice("Employer organization created.");
 		} catch (reason) {
 			reportError(reason);
@@ -627,30 +623,12 @@ export const Workspace = () => {
 						<span>rs</span>
 						<span className="brand-name">resume screener</span>
 					</a>
-					<div className="workspace-org">
-						<span>Organization</span>
-						<select
-							aria-label="Employer organization"
-							onChange={(event) =>
-								setOrganizationId(event.target.value)
-							}
-							value={organizationId}
-						>
-							{organizations.map((org) => (
-								<option key={org.id} value={org.id}>
-									{org.name} ({org.role})
-								</option>
-							))}
-						</select>
-						<Button
-							onClick={() => setIsCreateOrgOpen(true)}
-							size="sm"
-							variant="outline"
-						>
-							<Plus />
-							New
-						</Button>
-					</div>
+					{organization && (
+						<div className="workspace-org">
+							<span>Organization</span>
+							<strong>{organization.name}</strong>
+						</div>
+					)}
 				</div>
 				<div className="workspace-header-right">
 					<Button
