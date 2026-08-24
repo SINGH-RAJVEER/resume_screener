@@ -629,7 +629,7 @@ export const Workspace = () => {
 			<header className="workspace-header">
 				<div className="workspace-header-left">
 					<a href="/" className="brand-mark">
-						<span className="brand-name">SkillSignal</span>
+						<img src="/icon.webp" alt="SkillSignal" />
 					</a>
 					{organization && (
 						<div className="workspace-org">

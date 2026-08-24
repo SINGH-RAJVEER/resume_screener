@@ -104,7 +104,7 @@ export const InvitationUpload = () => {
 		<main className="candidate-page">
 			<header className="candidate-header">
 				<div className="brand-mark">
-					<span className="brand-name">SkillSignal</span>
+					<img src="/icon.webp" alt="SkillSignal" />
 				</div>
 				<span>{session.user.name}</span>
 			</header>

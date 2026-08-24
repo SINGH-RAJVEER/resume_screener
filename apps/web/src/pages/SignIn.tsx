@@ -60,7 +60,7 @@ export const SignIn = () => {
 			</Link>
 			<section className="auth-panel" aria-labelledby="sign-in-title">
 				<div className="brand-mark auth-brand">
-					<span className="brand-name">SkillSignal</span>
+					<img src="/icon.webp" alt="SkillSignal" />
 				</div>
 				<header className="auth-heading">
 					<h1 id="sign-in-title">Welcome back</h1>

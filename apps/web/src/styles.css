@@ -29,7 +29,6 @@ p {
 }
 .font-serif,
 .font-mono,
-.brand-name,
 .eyebrow,
 .section-kicker,
 .path-label,
@@ -63,8 +62,10 @@ p {
 	display: flex;
 	gap: 0.5rem;
 }
-.brand-name {
-	font-size: 0.8rem;
+.brand-mark img {
+	display: block;
+	height: 1.25rem;
+	width: auto;
 }
 .status-dot {
 	background: var(--ink);
