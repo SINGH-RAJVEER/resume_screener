@@ -20,6 +20,27 @@ INSTRUCTION_LIKE_TEXT = re.compile(
 	r"reveal (?:the )?system prompt|give this resume (?:a )?perfect score)\b",
 	re.IGNORECASE,
 )
+# The product supports English only. Detection is a conservative heuristic:
+# non-Latin scripts reject on script share, and longer Latin documents must
+# contain at least one recognized English function or resume word. Pure
+# keyword documents below the token threshold are never rejected.
+NON_LATIN_SCRIPT_SHARE = 0.25
+MIN_LANGUAGE_TOKENS = 15
+ENGLISH_WORDS = frozenset(
+	"""
+	the and for with from to of on at by an is are was were be been as it its
+	this that these those or but not have has had will would can could their
+	our your they we you
+	experience senior junior engineer engineering manager management developed
+	developer development built designed led managed operated created improved
+	reduced increased implemented delivered maintained supported education
+	university college degree bachelor master science computer software
+	services service platform systems system team teams project projects
+	skills certified certification location united kingdom states corporation
+	corp inc ltd llc group company consultant analyst specialist coordinator
+	director head lead staff principal architect
+	""".split()
+)
 
 pdf_filters.ZLIB_MAX_OUTPUT_LENGTH = MAX_PDF_DECOMPRESSED_STREAM_BYTES
 
@@ -213,6 +234,7 @@ def parsed_document(
 		raise DocumentParseError("Resume contains no extractable text")
 	if len(joined_text) > MAX_EXTRACTED_CHARACTERS:
 		raise DocumentParseError("Resume contains too much extractable text")
+	reject_non_english_text(joined_text)
 	non_whitespace_count = sum(not character.isspace() for character in joined_text)
 	warnings: list[str] = []
 	if non_whitespace_count < MIN_RELIABLE_NON_WHITESPACE_CHARACTERS:
@@ -251,3 +273,16 @@ def duplicate_block_ratio(blocks: list[EvidenceBlock]) -> float:
 	counts = Counter(normalized)
 	duplicate_count = sum(count - 1 for count in counts.values())
 	return duplicate_count / len(blocks)
+
+
+def reject_non_english_text(text: str) -> None:
+	letters = [character for character in text if character.isalpha()]
+	if letters:
+		non_latin = sum(1 for character in letters if ord(character) > 0x24F)
+		if non_latin / len(letters) > NON_LATIN_SCRIPT_SHARE:
+			raise DocumentParseError("Resume text uses an unsupported writing system")
+	tokens = re.findall(r"[A-Za-z]{2,}", text)
+	if len(tokens) >= MIN_LANGUAGE_TOKENS and not any(
+		token.casefold() in ENGLISH_WORDS for token in tokens
+	):
+		raise DocumentParseError("Resume text does not appear to be in English")

@@ -224,3 +224,29 @@ def test_rejects_excessive_extracted_text() -> None:
 def test_rejects_empty_text_documents() -> None:
 	with pytest.raises(DocumentParseError, match="no extractable text"):
 		extract_blocks(b" \n", "text/plain")
+
+
+def test_rejects_non_latin_writing_systems() -> None:
+	with pytest.raises(DocumentParseError, match="unsupported writing system"):
+		extract_blocks(
+			"Разработчик программного обеспечения с десятилетним опытом "
+			"проектирования распределённых систем и управления командами".encode(),
+			"text/plain",
+		)
+
+
+def test_rejects_non_english_latin_text() -> None:
+	with pytest.raises(DocumentParseError, match="appear to be in English"):
+		extract_blocks(
+			"Softwareentwickler mit zehn Jahren Erfahrung im Entwurf "
+			"verteilter Systeme und der Leitung von Plattformteams für ein "
+			"reguliertes Umfeld mit Fokus auf Zuverlässigkeit".encode(),
+			"text/plain",
+		)
+
+
+def test_short_keyword_documents_skip_language_detection() -> None:
+	parsed = extract_blocks(b"KUBERNETES DOCKER REDIS KAFKA", "text/plain")
+
+	assert parsed["quality"]["state"] == "review_required"
+	assert parsed["metadata"]["blockCount"] == 1
