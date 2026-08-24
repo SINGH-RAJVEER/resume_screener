@@ -21,7 +21,7 @@ from app.persistence.store import (
 
 SECRET = "test-secret-that-is-at-least-32-characters"
 SETTINGS = Settings(
-    database_url="postgresql://unused/resume_screener",
+    database_url="postgresql://unused/skillsignal",
     web_url="http://localhost:3000",
     jwt_secret=SECRET,
     jwt_ttl=timedelta(days=1),

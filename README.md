@@ -1,4 +1,4 @@
-# resume screener
+# SkillSignal
 
 A resume screening tool with two sides that never mix. Candidates run private
 checks on their own resumes and get a readiness score, suggestions, and a
@@ -86,7 +86,7 @@ and [bun](https://bun.sh).
 1. Create a database, then export connection settings:
 
 ```sh
-export DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/resume_screener"
+export DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/skillsignal"
 export JWT_SECRET="some-secret-at-least-32-characters-long"
 export STORAGE_ROOT=".local-storage"
 export OPENROUTER_API_KEY="sk-or-..."   # optional

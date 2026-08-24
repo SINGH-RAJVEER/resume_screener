@@ -48,7 +48,7 @@ class OpenRouterClient:
 		self._headers = {
 			"Authorization": f"Bearer {api_key}",
 			"Content-Type": "application/json",
-			"X-Title": "resume-screener",
+			"X-Title": "skillsignal",
 		}
 
 	async def complete_json(

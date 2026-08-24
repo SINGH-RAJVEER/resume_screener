@@ -40,7 +40,7 @@ from .telemetry import (
 	tracer,
 )
 
-logger = logging.getLogger("resume-screener.worker")
+logger = logging.getLogger("skillsignal.worker")
 
 
 class NonRetryableJobError(Exception):
@@ -86,9 +86,9 @@ class Worker:
 		with tracer.start_as_current_span(
 			"process_job",
 			attributes={
-				"resume_screener.job.id": job.id,
-				"resume_screener.job.type": job.type,
-				"resume_screener.job.attempt": job.attempt_count,
+				"skillsignal.job.id": job.id,
+				"skillsignal.job.type": job.type,
+				"skillsignal.job.attempt": job.attempt_count,
 			},
 		) as span:
 			try:

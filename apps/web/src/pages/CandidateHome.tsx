@@ -1,7 +1,7 @@
-import { Button } from "@resume-screener/ui/components/button";
-import { Input } from "@resume-screener/ui/components/input";
-import { Label } from "@resume-screener/ui/components/label";
-import { Textarea } from "@resume-screener/ui/components/textarea";
+import { Button } from "@skillsignal/ui/components/button";
+import { Input } from "@skillsignal/ui/components/input";
+import { Label } from "@skillsignal/ui/components/label";
+import { Textarea } from "@skillsignal/ui/components/textarea";
 import { FileDown, FileSearch, LoaderCircle } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import {
@@ -118,7 +118,7 @@ export const CandidateHome = () => {
 			<header className="candidate-header">
 				<div className="brand-mark">
 					<span>rs</span>
-					<span className="brand-name">resume screener</span>
+					<span className="brand-name">SkillSignal</span>
 				</div>
 				<div>
 					<span>{session?.user.name}</span>

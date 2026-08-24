@@ -1,4 +1,4 @@
-import { cn } from "@resume-screener/ui/lib/utils";
+import { cn } from "@skillsignal/ui/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 

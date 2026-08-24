@@ -1,6 +1,6 @@
-import { Button } from "@resume-screener/ui/components/button";
-import { Input } from "@resume-screener/ui/components/input";
-import { Label } from "@resume-screener/ui/components/label";
+import { Button } from "@skillsignal/ui/components/button";
+import { Input } from "@skillsignal/ui/components/input";
+import { Label } from "@skillsignal/ui/components/label";
 import { CheckCircle2, UploadCloud } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
@@ -94,7 +94,7 @@ export const InvitationUpload = () => {
 			<header className="candidate-header">
 				<div className="brand-mark">
 					<span>rs</span>
-					<span className="brand-name">resume screener</span>
+					<span className="brand-name">SkillSignal</span>
 				</div>
 				<span>{session.user.name}</span>
 			</header>

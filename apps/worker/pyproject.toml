@@ -1,5 +1,5 @@
 [project]
-name = "resume-screener-worker"
+name = "skillsignal-worker"
 version = "0.0.1"
 requires-python = ">=3.14"
 dependencies = [

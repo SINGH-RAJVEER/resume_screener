@@ -1,6 +1,6 @@
-import { Button } from "@resume-screener/ui/components/button";
-import { Input } from "@resume-screener/ui/components/input";
-import { Label } from "@resume-screener/ui/components/label";
+import { Button } from "@skillsignal/ui/components/button";
+import { Input } from "@skillsignal/ui/components/input";
+import { Label } from "@skillsignal/ui/components/label";
 import { ArrowLeft, BriefcaseBusiness, UserRound } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -62,7 +62,7 @@ export const SignUp = () => {
 			<section className="auth-panel" aria-labelledby="sign-up-title">
 				<div className="brand-mark auth-brand">
 					<span>rs</span>
-					<span className="brand-name">resume screener</span>
+					<span className="brand-name">SkillSignal</span>
 				</div>
 				<header className="auth-heading">
 					<h1 id="sign-up-title">Create your account</h1>

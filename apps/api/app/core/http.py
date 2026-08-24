@@ -5,7 +5,7 @@ from time import perf_counter
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-logger = logging.getLogger("resume-screener.api")
+logger = logging.getLogger("skillsignal.api")
 MAX_BODY_BYTES = 1 << 20
 MAX_MULTIPART_BODY_BYTES = 20 << 20
 

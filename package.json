@@ -1,5 +1,5 @@
 {
-	"name": "resume-screener",
+	"name": "skillsignal",
 	"private": true,
 	"workspaces": [
 		"apps/*",

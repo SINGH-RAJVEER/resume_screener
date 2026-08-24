@@ -11,7 +11,7 @@ def test_load_settings_requires_database_url(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_load_settings_reads_worker_limits(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://worker:secret@db/resume_screener")
+	monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://worker:secret@db/skillsignal")
 	monkeypatch.setenv("WORKER_POLL_INTERVAL_SECONDS", "1.5")
 	monkeypatch.setenv("WORKER_LEASE_SECONDS", "45")
 

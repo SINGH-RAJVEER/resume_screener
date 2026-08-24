@@ -13,9 +13,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-logger = logging.getLogger("resume-screener.api")
+logger = logging.getLogger("skillsignal.api")
 
-SERVICE_NAME = "resume-screener-api"
+SERVICE_NAME = "skillsignal-api"
 
 
 def telemetry_enabled() -> bool:

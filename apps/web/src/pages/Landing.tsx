@@ -1,4 +1,4 @@
-import { Button } from "@resume-screener/ui/components/button";
+import { Button } from "@skillsignal/ui/components/button";
 import { Link } from "react-router-dom";
 
 const FLOW_STEPS = [
@@ -39,7 +39,7 @@ const AUDIENCES = [
 export const Landing = () => (
 	<main className="public-page">
 		<header className="public-header">
-			<strong>resume screener</strong>
+			<strong>SkillSignal</strong>
 			<nav>
 				<Link to="/sign-in">Sign in</Link>
 				<Button asChild size="sm">

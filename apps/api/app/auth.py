@@ -10,7 +10,7 @@ import jwt
 
 from .persistence.store import NotFoundError, Store, UserRecord
 
-JWT_ISSUER = "resume-screener-api"
+JWT_ISSUER = "skillsignal-api"
 
 
 class InvalidCredentialsError(Exception):

@@ -10,9 +10,9 @@
 	},
 	"iconLibrary": "lucide",
 	"aliases": {
-		"components": "@resume-screener/ui/components",
-		"lib": "@resume-screener/ui/lib",
-		"utils": "@resume-screener/ui/lib/utils",
-		"ui": "@resume-screener/ui/components"
+		"components": "@skillsignal/ui/components",
+		"lib": "@skillsignal/ui/lib",
+		"utils": "@skillsignal/ui/lib/utils",
+		"ui": "@skillsignal/ui/components"
 	}
 }

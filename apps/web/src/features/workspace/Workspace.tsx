@@ -1,7 +1,7 @@
-import { Button } from "@resume-screener/ui/components/button";
-import { Input } from "@resume-screener/ui/components/input";
-import { Label } from "@resume-screener/ui/components/label";
-import { Textarea } from "@resume-screener/ui/components/textarea";
+import { Button } from "@skillsignal/ui/components/button";
+import { Input } from "@skillsignal/ui/components/input";
+import { Label } from "@skillsignal/ui/components/label";
+import { Textarea } from "@skillsignal/ui/components/textarea";
 import {
 	Briefcase,
 	CheckCircle2,
@@ -621,7 +621,7 @@ export const Workspace = () => {
 				<div className="workspace-header-left">
 					<a href="/" className="brand-mark">
 						<span>rs</span>
-						<span className="brand-name">resume screener</span>
+						<span className="brand-name">SkillSignal</span>
 					</a>
 					{organization && (
 						<div className="workspace-org">

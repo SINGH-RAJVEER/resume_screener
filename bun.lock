@@ -10,14 +10,14 @@
       },
     },
     "apps/api": {
-      "name": "@resume-screener/api",
+      "name": "@skillsignal/api",
       "version": "0.0.1",
     },
     "apps/web": {
-      "name": "@resume-screener/web",
+      "name": "@skillsignal/web",
       "version": "0.0.1",
       "dependencies": {
-        "@resume-screener/ui": "workspace:*",
+        "@skillsignal/ui": "workspace:*",
         "lucide-react": "^1.33.0",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
@@ -35,7 +35,7 @@
       },
     },
     "libs/ui": {
-      "name": "@resume-screener/ui",
+      "name": "@skillsignal/ui",
       "version": "0.0.1",
       "dependencies": {
         "@radix-ui/react-label": "^2.1.15",
@@ -186,12 +186,6 @@
 
     "@radix-ui/react-slot": ["@radix-ui/react-slot@1.3.3", "", { "dependencies": { "@radix-ui/react-compose-refs": "1.1.5" }, "peerDependencies": { "@types/react": "*", "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc" }, "optionalPeers": ["@types/react"] }, "sha512-qx7oqnYbxnK9kYI9m317qmFmEgo6ywqWvbTogdj7cL9p3/yx4M48p7Rnw5z3H890cL/ow/EeWJsuTykeZVXP5Q=="],
 
-    "@resume-screener/api": ["@resume-screener/api@workspace:apps/api"],
-
-    "@resume-screener/ui": ["@resume-screener/ui@workspace:libs/ui"],
-
-    "@resume-screener/web": ["@resume-screener/web@workspace:apps/web"],
-
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.60.0", "", { "os": "android", "cpu": "arm" }, "sha512-WOhNW9K8bR3kf4zLxbfg6Pxu2ybOUbB2AjMDHSQx86LIF4rH4Ft7vmMwNt0loO0eonglSNy4cpD3MKXXKQu0/A=="],
@@ -243,6 +237,12 @@
     "@rollup/rollup-win32-x64-gnu": ["@rollup/rollup-win32-x64-gnu@4.60.0", "", { "os": "win32", "cpu": "x64" }, "sha512-RdcryEfzZr+lAr5kRm2ucN9aVlCCa2QNq4hXelZxb8GG0NJSazq44Z3PCCc8wISRuCVnGs0lQJVX5Vp6fKA+IA=="],
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.60.0", "", { "os": "win32", "cpu": "x64" }, "sha512-PrsWNQ8BuE00O3Xsx3ALh2Df8fAj9+cvvX9AIA6o4KpATR98c9mud4XtDWVvsEuyia5U4tVSTKygawyJkjm60w=="],
+
+    "@skillsignal/api": ["@skillsignal/api@workspace:apps/api"],
+
+    "@skillsignal/ui": ["@skillsignal/ui@workspace:libs/ui"],
+
+    "@skillsignal/web": ["@skillsignal/web@workspace:apps/web"],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.3.3", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "^5.24.1", "jiti": "^2.7.0", "lightningcss": "1.32.0", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.3.3" } }, "sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg=="],
 

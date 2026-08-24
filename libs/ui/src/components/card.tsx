@@ -1,5 +1,5 @@
 import { Slot } from "@radix-ui/react-slot";
-import { cn } from "@resume-screener/ui/lib/utils";
+import { cn } from "@skillsignal/ui/lib/utils";
 import type * as React from "react";
 
 function Card({ className, ...props }: React.ComponentProps<"div">) {

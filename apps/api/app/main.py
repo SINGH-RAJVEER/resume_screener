@@ -21,7 +21,7 @@ from .core.http import (
 from .persistence.store import SQLAlchemyStore, Store, create_engine_for_url
 from .telemetry import instrument_app, instrument_engine, setup_telemetry
 
-logger = logging.getLogger("resume-screener.api")
+logger = logging.getLogger("skillsignal.api")
 
 
 @asynccontextmanager
