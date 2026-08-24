@@ -835,6 +835,19 @@ p {
 	flex: 1;
 	min-width: 14rem;
 }
+.join-policy {
+	border-top: 1px solid var(--rule);
+	display: grid;
+	gap: 0.75rem;
+	margin-top: 1rem;
+	padding-top: 1rem;
+}
+.join-policy .join-policy-title {
+	font-size: 0.8125rem;
+	letter-spacing: 0.08em;
+	margin: 0;
+	text-transform: uppercase;
+}
 .job-tabs {
 	border-bottom: 1px solid var(--rule);
 	display: flex;

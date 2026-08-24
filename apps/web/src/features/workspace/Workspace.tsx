@@ -22,6 +22,7 @@ import {
 	type EvaluationFilters,
 	type Job,
 	type JobDetail,
+	type JoinPolicy,
 	type Member,
 	type Organization,
 	type Requirement,
@@ -154,6 +155,9 @@ export const Workspace = () => {
 	const [memberEmail, setMemberEmail] = useState("");
 	const [memberRole, setMemberRole] =
 		useState<Pick<Member, "role">["role"]>("recruiter");
+	const [joinPolicy, setJoinPolicy] = useState<JoinPolicy | null>(null);
+	const [policyDomain, setPolicyDomain] = useState("");
+	const [policyEmail, setPolicyEmail] = useState("");
 	const [evaluationQuery, setEvaluationQuery] = useState("");
 	const [eligibilityFilter, setEligibilityFilter] =
 		useState<EligibilityFilter>("all");
@@ -472,6 +476,9 @@ export const Workspace = () => {
 		setIsMembersOpen(true);
 		try {
 			setMembers(await workspaceClient.members(organizationId));
+			if (currentOrg?.role === "owner") {
+				setJoinPolicy(await workspaceClient.joinPolicy(organizationId));
+			}
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -500,6 +507,80 @@ export const Workspace = () => {
 			await workspaceClient.removeMember(organizationId, userId);
 			setMembers(await workspaceClient.members(organizationId));
 			setNotice("Member removed.");
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const refreshJoinPolicy = async () => {
+		setJoinPolicy(await workspaceClient.joinPolicy(organizationId));
+	};
+
+	const changeDefaultRole = async (
+		defaultRole: JoinPolicy["defaultRole"],
+	) => {
+		try {
+			await workspaceClient.setJoinPolicyDefaultRole(
+				organizationId,
+				defaultRole,
+			);
+			await refreshJoinPolicy();
+			setNotice("Join policy updated.");
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const addPolicyDomain = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!policyDomain.trim()) return;
+		try {
+			const added = await workspaceClient.addJoinPolicyDomain(
+				organizationId,
+				policyDomain,
+			);
+			setPolicyDomain("");
+			await refreshJoinPolicy();
+			setNotice(`@${added.domain} can now join.`);
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const removePolicyDomain = async (domain: string) => {
+		try {
+			await workspaceClient.removeJoinPolicyDomain(
+				organizationId,
+				domain,
+			);
+			await refreshJoinPolicy();
+			setNotice("Domain rule removed. Existing members keep access.");
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const addPolicyEmail = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!policyEmail.trim()) return;
+		try {
+			const added = await workspaceClient.addJoinPolicyEmail(
+				organizationId,
+				policyEmail,
+			);
+			setPolicyEmail("");
+			await refreshJoinPolicy();
+			setNotice(`${added.email} can now join.`);
+		} catch (reason) {
+			reportError(reason);
+		}
+	};
+
+	const removePolicyEmail = async (email: string) => {
+		try {
+			await workspaceClient.removeJoinPolicyEmail(organizationId, email);
+			await refreshJoinPolicy();
+			setNotice("Email rule removed. Existing members keep access.");
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -1163,6 +1244,127 @@ export const Workspace = () => {
 							<p className="muted-copy">
 								Only owners can add or remove members.
 							</p>
+						)}
+						{currentOrg?.role === "owner" && joinPolicy && (
+							<div className="join-policy">
+								<h4 className="join-policy-title">Access</h4>
+								<p className="muted-copy">
+									New employer accounts matching a rule below
+									join this organization automatically with
+									the default role. Removing a rule never
+									removes existing members.
+								</p>
+								<div className="member-row">
+									<span style={{ fontWeight: 600 }}>
+										Default role for new members
+									</span>
+									<select
+										aria-label="Default member role"
+										className="workspace-filter-select"
+										onChange={(event) =>
+											void changeDefaultRole(
+												event.target
+													.value as JoinPolicy["defaultRole"],
+											)
+										}
+										value={joinPolicy.defaultRole}
+									>
+										<option value="recruiter">
+											Recruiter
+										</option>
+										<option value="viewer">Viewer</option>
+									</select>
+								</div>
+								{joinPolicy.domains.length > 0 && (
+									<div className="member-list">
+										{joinPolicy.domains.map((domain) => (
+											<div
+												className="member-row"
+												key={domain}
+											>
+												<span className="candidate-email">
+													@{domain}
+												</span>
+												<span className="member-side">
+													<Button
+														onClick={() =>
+															void removePolicyDomain(
+																domain,
+															)
+														}
+														size="sm"
+														variant="outline"
+													>
+														Remove
+													</Button>
+												</span>
+											</div>
+										))}
+									</div>
+								)}
+								<form
+									className="member-form"
+									onSubmit={addPolicyDomain}
+								>
+									<Input
+										aria-label="Allowed email domain"
+										onChange={(event) =>
+											setPolicyDomain(event.target.value)
+										}
+										placeholder="@company.com"
+										value={policyDomain}
+									/>
+									<Button size="sm" type="submit">
+										<Plus />
+										Allow domain
+									</Button>
+								</form>
+								{joinPolicy.emails.length > 0 && (
+									<div className="member-list">
+										{joinPolicy.emails.map((email) => (
+											<div
+												className="member-row"
+												key={email}
+											>
+												<span className="candidate-email">
+													{email}
+												</span>
+												<span className="member-side">
+													<Button
+														onClick={() =>
+															void removePolicyEmail(
+																email,
+															)
+														}
+														size="sm"
+														variant="outline"
+													>
+														Remove
+													</Button>
+												</span>
+											</div>
+										))}
+									</div>
+								)}
+								<form
+									className="member-form"
+									onSubmit={addPolicyEmail}
+								>
+									<Input
+										aria-label="Allowed email address"
+										onChange={(event) =>
+											setPolicyEmail(event.target.value)
+										}
+										placeholder="contractor@personal.org"
+										type="email"
+										value={policyEmail}
+									/>
+									<Button size="sm" type="submit">
+										<Plus />
+										Allow email
+									</Button>
+								</form>
+							</div>
 						)}
 					</div>
 				</div>

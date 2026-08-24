@@ -75,6 +75,12 @@ export interface Member {
 	role: "owner" | "recruiter" | "viewer";
 }
 
+export interface JoinPolicy {
+	defaultRole: "recruiter" | "viewer";
+	domains: string[];
+	emails: string[];
+}
+
 export interface Evaluation {
 	id: string;
 	candidateName: string | null;
@@ -266,5 +272,38 @@ export const workspaceClient = {
 			{
 				method: "DELETE",
 			},
+		),
+	joinPolicy: (organizationId: string) =>
+		request<JoinPolicy>(`/api/organizations/${organizationId}/join-policy`),
+	setJoinPolicyDefaultRole: (
+		organizationId: string,
+		defaultRole: JoinPolicy["defaultRole"],
+	) =>
+		request<{ defaultRole: string }>(
+			`/api/organizations/${organizationId}/join-policy`,
+			{
+				method: "PUT",
+				body: JSON.stringify({ default_role: defaultRole }),
+			},
+		),
+	addJoinPolicyDomain: (organizationId: string, domain: string) =>
+		request<{ domain: string }>(
+			`/api/organizations/${organizationId}/join-policy/domains`,
+			{ method: "POST", body: JSON.stringify({ domain }) },
+		),
+	removeJoinPolicyDomain: (organizationId: string, domain: string) =>
+		request<void>(
+			`/api/organizations/${organizationId}/join-policy/domains/${encodeURIComponent(domain)}`,
+			{ method: "DELETE" },
+		),
+	addJoinPolicyEmail: (organizationId: string, email: string) =>
+		request<{ email: string }>(
+			`/api/organizations/${organizationId}/join-policy/emails`,
+			{ method: "POST", body: JSON.stringify({ email }) },
+		),
+	removeJoinPolicyEmail: (organizationId: string, email: string) =>
+		request<void>(
+			`/api/organizations/${organizationId}/join-policy/emails/${encodeURIComponent(email)}`,
+			{ method: "DELETE" },
 		),
 };
