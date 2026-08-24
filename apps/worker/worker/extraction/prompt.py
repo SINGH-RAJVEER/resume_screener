@@ -11,8 +11,8 @@ certification must cite evidence as a block ID from the supplied document \
 plus an exact quote copied from that block.
 - Never output age, sex, race, ethnicity, religion, disability, marital \
 status, health, nationality, or other protected traits.
-- Suggestions must describe only what is documented in the document and \
-must never advise adding claims the document does not support.
+- Suggestions must cite the source passage they improve, describe only what \
+is documented, and never advise adding unsupported claims.
 """
 
 ASSESSMENT_SYSTEM_PROMPT = """\

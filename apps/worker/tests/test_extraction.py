@@ -60,7 +60,7 @@ async def test_extractor_sends_only_bounded_evidence_text() -> None:
 
 def raw_extraction() -> dict[str, object]:
 	return {
-		"schemaVersion": "2",
+		"schemaVersion": "3",
 		"contact": {
 			"name": "Ada Lovelace",
 			"email": "ada@example.com",
@@ -86,6 +86,11 @@ def raw_extraction() -> dict[str, object]:
 				"sourceText": "invented",
 				"evidence": [{"blockId": "p1-b1", "quote": "not in the block"}],
 			},
+			{
+				"canonicalName": "Fabricated claim",
+				"sourceText": "Kubernetes",
+				"evidence": [{"blockId": "p1-b1", "quote": "Python services"}],
+			},
 		],
 		"employment": [
 			{
@@ -97,7 +102,17 @@ def raw_extraction() -> dict[str, object]:
 				"evidence": [
 					{"blockId": "p1-b1", "quote": "Engineer at Example Corp"}
 				],
-			}
+			},
+			{
+				"employer": "Example Corp",
+				"title": "Astronaut",
+				"startDate": None,
+				"endDate": None,
+				"isCurrent": False,
+				"evidence": [
+					{"blockId": "p1-b1", "quote": "Engineer at Example Corp"}
+				],
+			},
 		],
 		"education": [],
 		"certifications": [
@@ -105,10 +120,21 @@ def raw_extraction() -> dict[str, object]:
 				"name": "Imaginary certification",
 				"issuer": None,
 				"evidence": [{"blockId": "p1-b1", "quote": "not in the block"}],
+			},
+			{
+				"name": "AWS Certified Architect",
+				"issuer": None,
+				"evidence": [{"blockId": "p1-b1", "quote": "Python services"}],
 			}
 		],
 		"suggestions": [
-			{"title": "Quantify outcomes", "detail": "Add measured results."}
+			{
+				"title": "Clarify the documented role",
+				"detail": "Use the existing role evidence in a clearer sentence.",
+				"evidence": [
+					{"blockId": "p1-b1", "quote": "Engineer at Example Corp"}
+				],
+			}
 		],
 		"warnings": [],
 	}
@@ -126,13 +152,16 @@ def test_validate_extraction_drops_facts_without_exact_source_evidence() -> None
 	skills = cast(list[dict[str, object]], facts["skills"])
 	assert [skill["canonicalName"] for skill in skills] == ["Python"]
 	assert facts["certifications"] == []
+	employment = cast(list[object], facts["employment"])
+	assert len(employment) == 1
 	contact = cast(dict[str, object], facts["contact"])
 	assert contact["name"] == "Ada Lovelace"
 	assert contact["email"] == "ada@example.com"
 	assert contact["location"] is None
 	warnings = cast(list[str], facts["warnings"])
-	assert "2 skills lacked valid evidence" in warnings
-	assert "1 certifications lacked valid evidence" in warnings
+	assert "3 skills lacked valid evidence" in warnings
+	assert "1 employment lacked valid evidence" in warnings
+	assert "2 certifications lacked valid evidence" in warnings
 	assert "1 contact fields lacked source evidence" in warnings
 
 

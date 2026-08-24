@@ -28,6 +28,7 @@ def test_all_persisted_artifact_versions_are_explicit() -> None:
 	} == {
 		"1",
 		"2",
+		"3",
 		"compiler-2",
 		"local-2",
 		"resume-parser-2",

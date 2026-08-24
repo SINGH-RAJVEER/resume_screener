@@ -14,6 +14,14 @@ from .schemas import (
 	strict_schema,
 )
 
+EVIDENCE_TEXT_FIELDS = {
+	"skills": ("sourceText",),
+	"employment": ("employer", "title"),
+	"education": ("institution", "degree", "fieldOfStudy"),
+	"certifications": ("name", "issuer"),
+	"suggestions": (),
+}
+
 
 def blocks_document(blocks: Sequence[Mapping[str, object]]) -> str:
 	return "\n\n".join(
@@ -59,7 +67,7 @@ def validate_extraction(
 		raise OpenRouterError("Model extraction does not match the schema") from error
 	facts = extraction.model_dump(by_alias=True)
 	warnings = cast(list[str], facts["warnings"])
-	for field in ("skills", "employment", "education", "certifications"):
+	for field, text_fields in EVIDENCE_TEXT_FIELDS.items():
 		entries = cast(list[object], facts[field])
 		grounded = [
 			validated
@@ -67,7 +75,7 @@ def validate_extraction(
 			if isinstance(item, dict)
 			and (
 				validated := validate_fact_evidence(
-					cast(dict[str, object], item), block_texts
+					cast(dict[str, object], item), block_texts, text_fields
 				)
 			)
 			is not None
@@ -165,7 +173,9 @@ def valid_evidence_quote(
 
 
 def validate_fact_evidence(
-	fact: dict[str, object], block_texts: Mapping[str, str]
+	fact: dict[str, object],
+	block_texts: Mapping[str, str],
+	text_fields: Sequence[str] = (),
 ) -> dict[str, object] | None:
 	evidence = [
 		cast(dict[str, object], entry)
@@ -175,6 +185,14 @@ def validate_fact_evidence(
 	]
 	if not evidence:
 		return None
+	evidence_text = "\n".join(str(entry.get("quote", "")) for entry in evidence).casefold()
+	if any(
+		isinstance(value := fact.get(field), str)
+		and value.strip()
+		and value.casefold() not in evidence_text
+		for field in text_fields
+	):
+		return None
 	return {**fact, "evidence": evidence}
 
 
@@ -183,16 +201,14 @@ def validate_contact_evidence(
 ) -> tuple[dict[str, object], int]:
 	grounded = validate_fact_evidence(contact, block_texts)
 	valid_evidence = cast(list[dict[str, object]], grounded.get("evidence", [])) if grounded else []
-	cited_texts = [
-		block_texts.get(str(evidence.get("blockId", "")), "") for evidence in valid_evidence
-	]
+	cited_text = "\n".join(str(evidence.get("quote", "")) for evidence in valid_evidence)
 	dropped = 0
 	result = {**contact, "evidence": valid_evidence}
 	for field in ("name", "email", "phone", "location"):
 		value = result.get(field)
 		if value is None:
 			continue
-		if not any(str(value).casefold() in text.casefold() for text in cited_texts):
+		if str(value).casefold() not in cited_text.casefold():
 			result[field] = None
 			dropped += 1
 	return result, dropped

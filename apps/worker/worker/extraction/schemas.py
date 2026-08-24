@@ -79,6 +79,7 @@ class CertificationFact(SchemaModel):
 class Suggestion(SchemaModel):
 	title: str = Field(min_length=1, max_length=200)
 	detail: str = Field(min_length=1, max_length=1_000)
+	evidence: list[EvidenceQuote] = Field(min_length=1, max_length=20)
 
 
 class RequirementOutcome(StrEnum):
@@ -102,7 +103,7 @@ class AssessmentOutput(SchemaModel):
 
 
 class ResumeExtraction(SchemaModel):
-	schema_version: Literal["2"] = RESUME_FACTS_SCHEMA_VERSION
+	schema_version: Literal["3"] = RESUME_FACTS_SCHEMA_VERSION
 	contact: ContactFacts
 	skills: list[SkillFact] = Field(max_length=200)
 	employment: list[EmploymentFact] = Field(max_length=100)
