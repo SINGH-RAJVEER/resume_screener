@@ -7,9 +7,7 @@ import { StructureFlow } from "./StructureFlow";
 // who load "/" see the workspace instead, so they keep the streaks too.
 export const PageBackground = () => {
 	const { pathname } = useLocation();
-	const { data: session, isPending } = authClient.useSession();
-	if (!isPending && (pathname !== "/" || session?.user)) {
-		return <ParticleField />;
-	}
+	const { data: session } = authClient.useSession();
+	if (pathname !== "/" || session?.user) return <ParticleField />;
 	return <StructureFlow />;
 };
