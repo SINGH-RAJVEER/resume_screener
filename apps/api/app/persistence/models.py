@@ -248,6 +248,11 @@ class JobRequirement(Base):
             "kind IN ('required', 'preferred', 'ignored', 'hard_gate')", name="ck_requirement_kind"
         ),
         CheckConstraint("weight > 0", name="ck_requirement_weight"),
+        CheckConstraint(
+            "assessability IN ('resume_evidence', 'candidate_attestation', "
+            "'recruiter_review', 'prohibited', 'unclear')",
+            name="ck_requirement_assessability",
+        ),
         UniqueConstraint("job_version_id", "stable_id", name="uq_job_requirement_stable_id"),
     )
 
@@ -259,6 +264,16 @@ class JobRequirement(Base):
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
     normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'other'"))
+    source_modality: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'unclear'")
+    )
+    assessability: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'unclear'")
+    )
+    predicate: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     aliases: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )

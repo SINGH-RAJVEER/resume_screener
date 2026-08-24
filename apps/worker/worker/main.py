@@ -26,6 +26,8 @@ from .extraction.extractor import (
 	merge_facts,
 	merge_suggestions,
 )
+from .job_descriptions.compiler import compile_job_description
+from .job_descriptions.extractor import extract_job_requirements
 from .providers.openrouter import OpenRouterClient, OpenRouterError
 
 logger = logging.getLogger("resume-screener.worker")
@@ -122,6 +124,9 @@ class Worker:
 			)
 
 	async def _dispatch(self, job: ClaimedJob) -> None:
+		if job.type == "job_description_processing":
+			await self._process_job_description(job)
+			return
 		if job.type == "independent_evaluation_processing":
 			await self._process_independent_evaluation(job)
 			return
@@ -251,6 +256,78 @@ class Worker:
 					{"id": secrets.token_urlsafe(18), "evaluation_id": evaluation_id},
 				)
 		await self._store_block_embeddings(job)
+
+	async def _process_job_description(self, job: ClaimedJob) -> None:
+		async with self._engine.connect() as connection:
+			result = await connection.execute(
+				text(
+					"""
+					SELECT source_text
+					FROM job_version
+					WHERE id = :version_id
+					"""
+				),
+				{"version_id": job.payload_reference},
+			)
+			source_text = result.scalar_one_or_none()
+		if source_text is None:
+			raise NonRetryableJobError("Job version not found")
+		source = str(source_text)
+		if self._openrouter is None:
+			artifact = compile_job_description(
+				source,
+				degraded=True,
+				degraded_reason=(
+					"Model extraction was unavailable; deterministic drafts require careful review"
+				),
+			)
+		else:
+			try:
+				model_output = await extract_job_requirements(
+					self._openrouter,
+					model=self._settings.openrouter.extraction_model,
+					source_text=source,
+					max_output_tokens=self._settings.openrouter.max_output_tokens,
+				)
+			except OpenRouterError as error:
+				logger.warning(
+					"job requirement extraction failed; using deterministic drafts",
+					extra={"job_id": job.id, "reason": str(error)},
+				)
+				artifact = compile_job_description(
+					source,
+					degraded=True,
+					degraded_reason=(
+						"Model extraction failed; deterministic drafts require careful review"
+					),
+				)
+			else:
+				artifact = compile_job_description(source, model_output)
+		async with self._engine.begin() as connection:
+			await connection.execute(
+				text(
+					"""
+					UPDATE job_version
+					SET draft_requirements = CAST(:artifact AS jsonb),
+						normalized_text = :normalized_text,
+						schema_version = :schema_version
+					WHERE id = :version_id
+						AND EXISTS (
+							SELECT 1 FROM processing_job
+							WHERE id = :job_id AND lease_token = :lease_token
+								AND lease_expires_at > now()
+						)
+					"""
+				),
+				{
+					"artifact": json.dumps(artifact),
+					"normalized_text": source.strip(),
+					"schema_version": str(artifact["schemaVersion"]),
+					"version_id": job.payload_reference,
+					"job_id": job.id,
+					"lease_token": job.lease_token,
+				},
+			)
 
 	async def _store_block_embeddings(self, job: ClaimedJob) -> None:
 		if self._openrouter is None:
@@ -504,7 +581,8 @@ class Worker:
 				text(
 					"""
 					SELECT requirement.id, requirement.kind, requirement.weight,
-						requirement.normalized_text
+						requirement.normalized_text, requirement.category,
+						requirement.assessability, requirement.predicate
 					FROM evaluation
 					JOIN job_requirement AS requirement
 						ON requirement.job_version_id = evaluation.job_version_id

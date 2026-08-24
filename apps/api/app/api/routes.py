@@ -23,7 +23,6 @@ from ..documents.ingestion import (
     validate_resume,
 )
 from ..documents.storage import LocalObjectStorage
-from ..jobs.requirement_drafts import draft_requirements
 from ..persistence.models import (
     CandidateRecord,
     Evaluation,
@@ -386,7 +385,7 @@ async def list_jobs(organization_id: str, request: Request) -> list[dict[str, ob
     ]
 
 
-@router.post("/api/jobs", status_code=201)
+@router.post("/api/jobs", status_code=202)
 async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
@@ -400,14 +399,28 @@ async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]
         source_text=input_data.description,
         normalized_text=input_data.description.strip(),
         source_media_type="text/plain",
-        draft_requirements={"requirements": draft_requirements(input_data.description)},
+        draft_requirements=None,
+        schema_version="2",
+    )
+    processing_job = ProcessingJob(
+        id=new_id(),
+        type="job_description_processing",
+        status="ready",
+        payload_reference=version.id,
+        idempotency_key=version.id,
+        maximum_attempts=3,
     )
     async with store.sessions().begin() as session:
         await require_write_membership(session, input_data.organization_id, user.id)
         session.add(job)
         await session.flush()
         session.add(version)
-    return {"id": job.id, "versionId": version.id}
+        session.add(processing_job)
+    return {
+        "id": job.id,
+        "versionId": version.id,
+        "processingJobId": processing_job.id,
+    }
 
 
 @router.get("/api/jobs/{job_id}")
@@ -425,6 +438,25 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
                 select(JobRequirement).where(JobRequirement.job_version_id == version.id)
             )
         ).scalars()
+        processing = (
+            await session.execute(
+                select(ProcessingJob)
+                .where(
+                    ProcessingJob.type == "job_description_processing",
+                    ProcessingJob.payload_reference == version.id,
+                )
+                .order_by(ProcessingJob.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        artifact = version.draft_requirements or {}
+        draft_status = (
+            "ready"
+            if artifact
+            else "failed"
+            if processing is not None and processing.status == "dead"
+            else "processing"
+        )
         return {
             "id": job.id,
             "organizationId": job.organization_id,
@@ -437,9 +469,11 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
             else None,
             "description": version.source_text,
             "confirmed": version.confirmed_at is not None,
-            "draftRequirements": version.draft_requirements.get("requirements", [])
-            if version.draft_requirements
-            else [],
+            "draftStatus": draft_status,
+            "draftQualityState": artifact.get("qualityState"),
+            "draftWarnings": artifact.get("warnings", []),
+            "draftDegraded": artifact.get("degraded", False),
+            "draftRequirements": artifact.get("requirements", []),
             "requirements": [
                 {
                     "id": requirement.id,
@@ -447,6 +481,11 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
                     "text": requirement.normalized_text,
                     "kind": requirement.kind,
                     "weight": requirement.weight,
+                    "category": requirement.category,
+                    "sourceModality": requirement.source_modality,
+                    "assessability": requirement.assessability,
+                    "predicate": requirement.predicate,
+                    "sourceEvidence": requirement.source_evidence,
                 }
                 for requirement in requirements
             ],
@@ -493,6 +532,8 @@ async def confirm_requirements(
             raise APIError(404, "NOT_FOUND", "Job not found")
         await require_write_membership(session, job.organization_id, user.id)
         previous_version = await latest_job_version(session, job.id)
+        artifact = previous_version.draft_requirements or {}
+        draft_by_id = requirement_drafts_by_id(artifact.get("requirements"))
         version = JobVersion(
             id=new_id(),
             job_id=job.id,
@@ -507,6 +548,14 @@ async def confirm_requirements(
         session.add(version)
         await session.flush()
         for requirement in input_data.requirements:
+            draft: dict[str, object] = draft_by_id.get(requirement.stable_id, {})
+            assessability = str(draft.get("assessability", "resume_evidence"))
+            if assessability != "resume_evidence" and requirement.kind != "ignored":
+                raise APIError(
+                    400,
+                    "INVALID_REQUEST",
+                    "Only resume-evidence requirements can enter automated scoring",
+                )
             session.add(
                 JobRequirement(
                     id=new_id(),
@@ -515,8 +564,30 @@ async def confirm_requirements(
                     kind=requirement.kind,
                     weight=requirement.weight,
                     normalized_text=requirement.normalized_text,
+                    category=str(draft.get("category", "other")),
+                    source_modality=str(draft.get("sourceModality", "unclear")),
+                    assessability=assessability,
+                    predicate=cast(
+                        dict[str, object],
+                        draft.get("predicate")
+                        or {
+                            "operator": "all_of",
+                            "criteria": [
+                                {
+                                    "type": "other",
+                                    "canonicalName": None,
+                                    "minimumMonths": None,
+                                    "minimumLevel": None,
+                                    "subjects": [],
+                                }
+                            ],
+                        },
+                    ),
                     aliases=[],
-                    source_evidence=[],
+                    source_evidence=cast(
+                        list[dict[str, object]],
+                        draft.get("evidence") or [],
+                    ),
                 )
             )
     return {"confirmed": True}
@@ -1213,3 +1284,17 @@ async def require_owner(session: AsyncSession, organization_id: str, user_id: st
 
 def new_id() -> str:
     return token_urlsafe(18)
+
+
+def requirement_drafts_by_id(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list):
+        return {}
+    drafts: dict[str, dict[str, object]] = {}
+    for item in cast(list[object], value):
+        if not isinstance(item, dict):
+            continue
+        draft = cast(dict[str, object], item)
+        stable_id = draft.get("stableId")
+        if isinstance(stable_id, str) and stable_id:
+            drafts[stable_id] = draft
+    return drafts
