@@ -60,7 +60,7 @@ services:
             OPENROUTER_EXTRACTION_MODEL: ${OPENROUTER_EXTRACTION_MODEL:-}
             OPENROUTER_ASSESSMENT_MODEL: ${OPENROUTER_ASSESSMENT_MODEL:-}
         volumes:
-            - resume_storage:/var/resume-storage:ro
+            - resume_storage:/var/resume-storage
         deploy:
             resources:
                 limits:
