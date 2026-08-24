@@ -1,6 +1,7 @@
+import re
 from dataclasses import dataclass
 from io import BytesIO
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath
 from stat import S_IFLNK, S_IFMT
 from zipfile import BadZipFile, ZipFile
 
@@ -8,6 +9,7 @@ MAX_RESUME_BYTES = 20 * 1024 * 1024
 MAX_BATCH_FILES = 500
 MAX_BATCH_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 100
+MAX_ZIP_DEPTH = 10
 MAX_DOCX_ENTRIES = 1_000
 MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 SUPPORTED_RESUME_TYPES = {
@@ -92,12 +94,20 @@ def inspect_resume_zip(content: bytes) -> list[BatchEntry]:
 		result: list[BatchEntry] = []
 		for entry in entries:
 			reason = zip_entry_reason(
-				entry.filename, entry.external_attr, entry.compress_size, entry.file_size
+				entry.filename,
+				entry.external_attr,
+				entry.flag_bits,
+				entry.compress_size,
+				entry.file_size,
 			)
 			if reason:
 				result.append(BatchEntry(entry.filename, None, reason))
 				continue
-			entry_content = archive.read(entry)
+			try:
+				entry_content = archive.read(entry)
+			except (BadZipFile, RuntimeError, NotImplementedError):
+				result.append(BatchEntry(entry.filename, None, "ZIP entry could not be read"))
+				continue
 			try:
 				validate_document(
 					entry_content, media_type_for_name(entry.filename), entry.filename
@@ -110,14 +120,29 @@ def inspect_resume_zip(content: bytes) -> list[BatchEntry]:
 
 
 def zip_entry_reason(
-	filename: str, external_attr: int, compressed_size: int, file_size: int
+	filename: str,
+	external_attr: int,
+	flag_bits: int,
+	compressed_size: int,
+	file_size: int,
 ) -> str | None:
-	if PurePath(filename).is_absolute() or ".." in PurePath(filename).parts:
+	path = PurePosixPath(filename.replace("\\", "/"))
+	if (
+		path.is_absolute()
+		or ".." in path.parts
+		or re.match(r"^[A-Za-z]:", filename) is not None
+	):
 		return "ZIP entry has an unsafe path"
+	if len(path.parts) - 1 > MAX_ZIP_DEPTH:
+		return "ZIP entry exceeds the nesting limit"
 	if S_IFMT(external_attr >> 16) == S_IFLNK:
 		return "ZIP entry is a symlink"
+	if flag_bits & 0x1:
+		return "Encrypted ZIP entries are not supported"
 	if filename.casefold().endswith(".zip"):
 		return "Nested ZIP archives are not supported"
+	if not compressed_size and file_size:
+		return "ZIP entry has a suspicious compression ratio"
 	if compressed_size and file_size / compressed_size > MAX_COMPRESSION_RATIO:
 		return "ZIP entry has a suspicious compression ratio"
 	return None

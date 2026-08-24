@@ -80,3 +80,20 @@ def test_reports_each_invalid_zip_entry_without_rejecting_valid_resumes() -> Non
 		("unsafe/../resume.txt", "ZIP entry has an unsafe path"),
 		("readme.md", "Document must be a PDF, DOCX, or TXT file"),
 	]
+
+
+def test_rejects_windows_paths_and_excessive_zip_nesting() -> None:
+	content = BytesIO()
+	with ZipFile(content, "w") as archive:
+		archive.writestr("C:\\resumes\\candidate.txt", "invalid")
+		archive.writestr("/".join(["nested"] * 11) + "/candidate.txt", "invalid")
+
+	entries = inspect_resume_zip(content.getvalue())
+
+	assert [(entry.name, entry.reason) for entry in entries] == [
+		("C:\\resumes\\candidate.txt", "ZIP entry has an unsafe path"),
+		(
+			"/".join(["nested"] * 11) + "/candidate.txt",
+			"ZIP entry exceeds the nesting limit",
+		),
+	]

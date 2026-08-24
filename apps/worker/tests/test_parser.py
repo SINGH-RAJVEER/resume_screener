@@ -11,10 +11,12 @@ from worker.documents.parser import DocumentParseError, extract_blocks
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def pdf_with_pages(*page_texts: str | None) -> bytes:
+def pdf_with_pages(
+	*page_texts: str | None, width: float = 612, height: float = 792
+) -> bytes:
 	writer = PdfWriter()
 	for text in page_texts:
-		page = writer.add_blank_page(width=612, height=792)
+		page = writer.add_blank_page(width=width, height=height)
 		if text is None:
 			continue
 		font = DictionaryObject(
@@ -156,6 +158,22 @@ def test_rejects_image_only_pdf() -> None:
 def test_rejects_malformed_pdf() -> None:
 	with pytest.raises(DocumentParseError, match="could not be parsed"):
 		extract_blocks(b"%PDF-1.7\nnot a complete PDF", "application/pdf")
+
+
+def test_rejects_pdf_with_excessive_page_dimensions() -> None:
+	with pytest.raises(DocumentParseError, match="page dimensions"):
+		extract_blocks(
+			pdf_with_pages(
+				"Ada Lovelace, Python engineer with ten years of experience.",
+				width=14_401,
+			),
+			"application/pdf",
+		)
+
+
+def test_rejects_pdf_over_the_page_limit_before_extraction() -> None:
+	with pytest.raises(DocumentParseError, match="exceeds 100 pages"):
+		extract_blocks(pdf_with_pages(*([None] * 101)), "application/pdf")
 
 
 def test_marks_documents_with_too_little_text_for_review() -> None:

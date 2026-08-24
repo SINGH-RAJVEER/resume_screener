@@ -7,8 +7,11 @@ from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 from pypdf import PdfReader
+from pypdf import filters as pdf_filters
 
 MAX_PAGES = 100
+MAX_PDF_PAGE_DIMENSION_POINTS = 14_400
+MAX_PDF_DECOMPRESSED_STREAM_BYTES = 25 * 1024 * 1024
 MAX_EXTRACTED_CHARACTERS = 250_000
 MIN_RELIABLE_NON_WHITESPACE_CHARACTERS = 40
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -17,6 +20,8 @@ INSTRUCTION_LIKE_TEXT = re.compile(
 	r"reveal (?:the )?system prompt|give this resume (?:a )?perfect score)\b",
 	re.IGNORECASE,
 )
+
+pdf_filters.ZLIB_MAX_OUTPUT_LENGTH = MAX_PDF_DECOMPRESSED_STREAM_BYTES
 
 
 class DocumentParseError(ValueError):
@@ -80,6 +85,16 @@ def extract_pdf_blocks(content: bytes) -> ParsedDocument:
 		raise DocumentParseError("Encrypted resume PDFs are not supported")
 	if len(reader.pages) > MAX_PAGES:
 		raise DocumentParseError("Resume PDF exceeds 100 pages")
+	for page in reader.pages:
+		width = float(page.mediabox.width)
+		height = float(page.mediabox.height)
+		if (
+			width <= 0
+			or height <= 0
+			or width > MAX_PDF_PAGE_DIMENSION_POINTS
+			or height > MAX_PDF_PAGE_DIMENSION_POINTS
+		):
+			raise DocumentParseError("Resume PDF has unsupported page dimensions")
 	page_text: list[str] = []
 	try:
 		for page in reader.pages:
