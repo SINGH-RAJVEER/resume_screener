@@ -83,8 +83,6 @@ services:
         restart: unless-stopped
         ports:
             - "3000:3000"
-        depends_on:
-            - api
 
 volumes:
     postgres_data:

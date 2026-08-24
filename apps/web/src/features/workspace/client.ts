@@ -130,7 +130,7 @@ export const workspaceClient = {
 		URL.revokeObjectURL(url);
 	},
 	createJob: (organizationId: string, title: string, description: string) =>
-		request<{ id: string }>("/api/jobs", {
+		request<{ id: string; versionId: string }>("/api/jobs", {
 			method: "POST",
 			body: JSON.stringify({
 				organization_id: organizationId,
