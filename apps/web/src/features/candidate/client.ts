@@ -84,10 +84,7 @@ export const candidateClient = {
 			processingJobId: string;
 			submissionId: string;
 			evaluationId: string;
-		}>(
-			`/api/jobs/${jobId}/resumes`,
-			{ method: "POST", body },
-		);
+		}>(`/api/jobs/${jobId}/resumes`, { method: "POST", body });
 	},
 };
 

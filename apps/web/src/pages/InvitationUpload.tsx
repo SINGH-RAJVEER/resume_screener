@@ -3,7 +3,7 @@ import { Input } from "@skillsignal/ui/components/input";
 import { Label } from "@skillsignal/ui/components/label";
 import { CheckCircle2, UploadCloud } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { candidateClient } from "../features/candidate/client";
 import { authClient } from "../lib/auth-client";
 
@@ -13,7 +13,10 @@ export const InvitationUpload = () => {
 	const [jobId, setJobId] = useState<string | null>(null);
 	const [resume, setResume] = useState<File | null>(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [submitted, setSubmitted] = useState(false);
+	const [receipt, setReceipt] = useState<{
+		submissionId: string;
+		receivedAt: Date;
+	} | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -72,8 +75,15 @@ export const InvitationUpload = () => {
 		setError(null);
 		setIsSubmitting(true);
 		try {
-			await candidateClient.uploadInvitedResume(jobId, token, resume);
-			setSubmitted(true);
+			const result = await candidateClient.uploadInvitedResume(
+				jobId,
+				token,
+				resume,
+			);
+			setReceipt({
+				submissionId: result.submissionId,
+				receivedAt: new Date(),
+			});
 		} catch (reason) {
 			setError(
 				reason instanceof Error
@@ -86,6 +96,7 @@ export const InvitationUpload = () => {
 	};
 
 	const selectResume = (event: ChangeEvent<HTMLInputElement>) => {
+		setError(null);
 		setResume(event.currentTarget.files?.[0] ?? null);
 	};
 
@@ -99,7 +110,7 @@ export const InvitationUpload = () => {
 			</header>
 			<section className="candidate-content">
 				<header className="candidate-intro">
-					<p className="eyebrow">Job application</p>
+					<p className="eyebrow">Employer submission</p>
 					<h1>Submit your resume.</h1>
 					<p>
 						Only the employer who sent this link receives your
@@ -107,14 +118,23 @@ export const InvitationUpload = () => {
 					</p>
 				</header>
 				<section className="candidate-action">
-					{submitted ? (
-						<div className="submission-success">
-							<CheckCircle2 />
-							<h2>Resume submitted</h2>
+					{receipt ? (
+						<div className="submission-success" role="status">
+							<CheckCircle2 aria-hidden />
+							<p className="eyebrow">Submission received</p>
+							<h2>The employer has your resume.</h2>
 							<p>
-								Your document was received and queued for
-								processing.
+								Received {receipt.receivedAt.toLocaleString()}.
+								The document is queued for processing.
 							</p>
+							<code>{receipt.submissionId}</code>
+							<p>
+								This page does not show the employer's score,
+								eligibility result, or review decision.
+							</p>
+							<Button asChild size="sm" variant="outline">
+								<Link to="/">Go to private resume checks</Link>
+							</Button>
 						</div>
 					) : jobId ? (
 						<form className="candidate-form" onSubmit={upload}>
@@ -137,16 +157,18 @@ export const InvitationUpload = () => {
 								disabled={!resume || isSubmitting}
 								type="submit"
 							>
-								<UploadCloud />
-								{isSubmitting
-									? "Uploading..."
-									: "Submit resume"}
+								<UploadCloud aria-hidden />
+								{isSubmitting ? "Uploading" : "Submit resume"}
 							</Button>
 						</form>
-					) : (
-						<p>Opening invitation...</p>
+					) : error ? null : (
+						<p role="status">Opening invitation...</p>
 					)}
-					{error && <p className="form-error">{error}</p>}
+					{error && (
+						<p className="form-error" role="alert">
+							{error}
+						</p>
+					)}
 				</section>
 			</section>
 		</main>
