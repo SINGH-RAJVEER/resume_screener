@@ -82,16 +82,15 @@ p {
 	width: 0.45rem;
 }
 
-.particle-field {
+.structure-flow {
+	height: 100%;
 	inset: 0;
 	pointer-events: none;
 	position: fixed;
+	width: 100%;
 	z-index: -1;
-}
-@media (prefers-reduced-motion: reduce) {
-	.particle-field {
-		display: none;
-	}
+	/* Fade the dome toward the top of the viewport, as in the ThreeUI reference. */
+	mask-image: linear-gradient(to bottom, transparent 20%, black 55%);
 }
 
 .public-page {
@@ -535,12 +534,9 @@ p {
 	color: var(--muted);
 	font-size: 0.6875rem;
 }
-.workspace-org select,
-.workspace-filter select {
-	background: #fff;
-	border: 1px solid var(--rule);
-	font-size: 0.75rem;
-	padding: 0.3rem 0.5rem;
+.workspace-org strong {
+	font-size: 0.8125rem;
+	font-weight: 600;
 }
 .workspace-header-right {
 	align-items: center;
