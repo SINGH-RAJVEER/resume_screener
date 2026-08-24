@@ -1,10 +1,15 @@
 import { useLocation } from "react-router-dom";
+import { authClient } from "../lib/auth-client";
 import { ParticleField } from "./ParticleField";
 import { StructureFlow } from "./StructureFlow";
 
-// The landing page carries the Three.js dome; every other page keeps the
-// original constellation streaks.
+// The Three.js dome belongs to the public landing page only; signed-in users
+// who load "/" see the workspace instead, so they keep the streaks too.
 export const PageBackground = () => {
 	const { pathname } = useLocation();
-	return pathname === "/" ? <StructureFlow /> : <ParticleField />;
+	const { data: session, isPending } = authClient.useSession();
+	if (!isPending && (pathname !== "/" || session?.user)) {
+		return <ParticleField />;
+	}
+	return <StructureFlow />;
 };
