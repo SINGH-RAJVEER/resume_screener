@@ -110,7 +110,7 @@ p {
 	display: flex;
 	gap: 1rem;
 }
-.public-header a {
+.public-header nav a:not([data-slot="button"]) {
 	color: var(--ink);
 	font-size: 0.8125rem;
 	text-decoration: none;
@@ -1300,7 +1300,7 @@ p {
 	.candidate-header {
 		padding-inline: 1rem;
 	}
-	.public-header nav a {
+	.public-header nav a:not([data-slot="button"]) {
 		display: none;
 	}
 	.public-hero,
