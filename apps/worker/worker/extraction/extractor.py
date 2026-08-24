@@ -107,12 +107,17 @@ async def assess_requirements(
 	return validate_assessments(
 		raw,
 		{str(requirement["id"]) for requirement in requirements},
-		{str(block["id"]) for block in blocks},
+		{
+			str(block["id"]): str(block.get("text", ""))
+			for block in blocks
+		},
 	)
 
 
 def validate_assessments(
-	raw: dict[str, object], requirement_ids: set[str], block_ids: set[str]
+	raw: dict[str, object],
+	requirement_ids: set[str],
+	block_texts: Mapping[str, str],
 ) -> list[dict[str, object]]:
 	try:
 		output = AssessmentOutput.model_validate(raw)
@@ -126,7 +131,7 @@ def validate_assessments(
 		entry["evidence"] = [
 			item
 			for item in entry["evidence"]
-			if str(cast(dict[str, object], item).get("blockId", "")) in block_ids
+			if valid_evidence_quote(cast(dict[str, object], item), block_texts)
 		]
 		if (
 			RequirementOutcome(entry["outcome"]) is not RequirementOutcome.UNKNOWN
@@ -138,6 +143,14 @@ def validate_assessments(
 			entry["confidence"] = min(float(entry["confidence"]), 0.5)
 		valid.append(entry)
 	return valid
+
+
+def valid_evidence_quote(
+	evidence: Mapping[str, object], block_texts: Mapping[str, str]
+) -> bool:
+	block_id = str(evidence.get("blockId", ""))
+	quote = str(evidence.get("quote", ""))
+	return bool(quote) and quote in block_texts.get(block_id, "")
 
 
 def prune_skill(

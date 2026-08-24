@@ -76,7 +76,8 @@ DEGREE_LEVELS = {
 	"bachelor": ("bachelor", "undergraduate degree", "btech", "b.tech", "bsc", "b.sc"),
 }
 PROHIBITED_PATTERN = re.compile(
-	r"\b(age|gender|sex|race|ethnicity|religion|marital status|pregnan(?:t|cy)|disability)\b",
+	r"\b(age|gender|sex|race|ethnicity|religion|marital status|pregnan(?:t|cy)|"
+	r"disability|nationality|national origin|health|veteran status)\b",
 	re.IGNORECASE,
 )
 ATTESTATION_PATTERNS = {
@@ -146,8 +147,6 @@ def source_blocks(source_text: str) -> list[JobBlock]:
 				was_bullet=bullet is not None,
 			)
 		)
-	if not source_text.endswith(("\n", "\r")) and offset < len(source_text):
-		offset = len(source_text)
 	return blocks
 
 

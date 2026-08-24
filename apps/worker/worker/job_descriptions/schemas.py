@@ -65,14 +65,6 @@ class CriterionType(StrEnum):
 	OTHER = "other"
 
 
-class EvidenceSpan(SchemaModel):
-	block_id: str = Field(min_length=1, max_length=128)
-	quote: str = Field(min_length=1, max_length=2_000)
-	start_offset: int = Field(ge=0)
-	end_offset: int = Field(gt=0)
-	section: str = Field(min_length=1, max_length=64)
-
-
 class ModelEvidenceQuote(SchemaModel):
 	block_id: str = Field(min_length=1, max_length=128)
 	quote: str = Field(min_length=1, max_length=2_000)

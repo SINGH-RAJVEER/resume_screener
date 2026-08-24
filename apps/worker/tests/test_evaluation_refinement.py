@@ -63,10 +63,31 @@ def test_unsupported_confirmation_degrades_to_unknown() -> None:
 			}
 		]},
 		{"req-1"},
-		{"p1-b1"},
+		{"p1-b1": "built in Python"},
 	)
 	assert validated[0]["outcome"] == "unknown"
 	assert float(cast("SupportsFloat", validated[0]["confidence"])) <= 0.5
+
+
+def test_fabricated_quote_with_valid_block_id_degrades_to_unknown() -> None:
+	from worker.extraction.extractor import validate_assessments
+
+	validated = validate_assessments(
+		{"assessments": [
+			{
+				"requirementId": "req-1",
+				"outcome": "not_met",
+				"confidence": 0.9,
+				"reasoning": "contradicted",
+				"evidence": [{"blockId": "p1-b1", "quote": "No Python experience"}],
+			}
+		]},
+		{"req-1"},
+		{"p1-b1": "Built production systems in Python."},
+	)
+
+	assert validated[0]["outcome"] == "unknown"
+	assert validated[0]["evidence"] == []
 
 
 def test_summarize_hard_gate_eligibility() -> None:
