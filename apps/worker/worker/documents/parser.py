@@ -19,8 +19,7 @@ WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 # PDF geometry heuristics. Coordinates keep the PDF coordinate system, where
 # the origin is the bottom-left corner of the page.
 PDF_LINE_TOLERANCE_POINTS = 3.0
-PDF_COLUMN_GAP_POINTS = 40.0
-PDF_COLUMN_BOUNDARY_TOLERANCE = 20.0
+PDF_CLUSTER_GAP_POINTS = 100.0
 PDF_BLOCK_MERGE_FACTOR = 1.8
 PDF_CHAR_WIDTH_FACTOR = 0.55
 INSTRUCTION_LIKE_TEXT = re.compile(
@@ -201,45 +200,47 @@ def group_pdf_lines(fragments: list[PdfFragment]) -> list[list[PdfFragment]]:
 	return lines
 
 
-def split_line_segments(line: list[PdfFragment]) -> list[list[PdfFragment]]:
-	segments: list[list[PdfFragment]] = [[line[0]]]
-	for fragment in line[1:]:
-		previous = segments[-1][-1]
-		gap = fragment.x - (previous.x + fragment_width(previous))
-		if gap > PDF_COLUMN_GAP_POINTS:
-			segments.append([fragment])
-		else:
-			segments[-1].append(fragment)
-	return segments
+def column_boundaries_for(fragments: list[PdfFragment]) -> list[float]:
+	if len(fragments) < 4:
+		return []
+	ordered_x = sorted(fragment.x for fragment in fragments)
+	split_indexes = [
+		index
+		for index in range(len(ordered_x) - 1)
+		if ordered_x[index + 1] - ordered_x[index] > PDF_CLUSTER_GAP_POINTS
+	]
+	boundaries = [
+		(ordered_x[index] + ordered_x[index + 1]) / 2 for index in split_indexes
+	]
+	minimum_side = len(ordered_x) / 4
+	for boundary in boundaries:
+		left_count = sum(1 for x in ordered_x if x <= boundary)
+		if left_count < minimum_side or len(ordered_x) - left_count < minimum_side:
+			return []
+	return boundaries
 
 
 def ordered_pdf_lines(
 	lines: list[list[PdfFragment]],
 ) -> list[tuple[int, list[PdfFragment]]]:
-	splits = [split_line_segments(line) for line in lines]
-	if sum(1 for segments in splits if len(segments) > 1) < 2:
+	fragments = [fragment for line in lines for fragment in line]
+	boundaries = column_boundaries_for(fragments)
+	if not boundaries:
 		return [(0, line) for line in sorted(lines, key=lambda line: -line[0].y)]
-	boundaries: list[float] = []
-	for segments in splits:
-		for left, right in zip(segments, segments[1:]):
-			mid = (left[-1].x + fragment_width(left[-1]) + right[0].x) / 2
-			boundaries.append(mid)
-	boundaries.sort()
-	column_boundaries: list[float] = []
-	for boundary in boundaries:
-		if (
-			not column_boundaries
-			or boundary - column_boundaries[-1] > PDF_COLUMN_BOUNDARY_TOLERANCE
-		):
-			column_boundaries.append(boundary)
 
-	def column_index(segment: list[PdfFragment]) -> int:
-		return sum(1 for boundary in column_boundaries if segment[0].x > boundary)
+	def column_of(x: float) -> int:
+		return sum(1 for boundary in boundaries if x > boundary)
 
 	ordered: list[tuple[int, list[PdfFragment]]] = []
-	for segments in splits:
-		for segment in segments:
-			ordered.append((column_index(segment), segment))
+	for line in lines:
+		run: list[PdfFragment] = [line[0]]
+		for fragment in line[1:]:
+			if column_of(fragment.x) != column_of(run[0].x):
+				ordered.append((column_of(run[0].x), run))
+				run = [fragment]
+			else:
+				run.append(fragment)
+		ordered.append((column_of(run[0].x), run))
 	ordered.sort(key=lambda item: (item[0], -item[1][0].y))
 	return ordered
 
