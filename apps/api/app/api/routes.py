@@ -1369,10 +1369,19 @@ async def list_evaluations(
     request: Request,
     eligibility: list[str] | None = Query(default=None),
     minimum_score: int | None = Query(default=None, ge=0, le=100),
+    minimum_coverage: int | None = Query(default=None, ge=0, le=100),
+    status: list[str] | None = Query(default=None),
+    outcome: list[str] | None = Query(default=None),
+    search: str = Query(default=""),
+    skill: str = Query(default=""),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[dict[str, object]]:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
+    if status and not set(status) <= VALID_EVALUATION_STATUSES:
+        raise APIError(400, "INVALID_REQUEST", "Unknown processing status filter")
+    if outcome and not set(outcome) <= VALID_ASSESSMENT_OUTCOMES:
+        raise APIError(400, "INVALID_REQUEST", "Unknown requirement outcome filter")
     async with store.sessions()() as session:
         job = await session.get(Job, job_id)
         if job is None:
@@ -1390,7 +1399,37 @@ async def list_evaluations(
             statement = statement.where(Evaluation.eligibility.in_(eligibility))
         if minimum_score is not None:
             statement = statement.where(Evaluation.score >= minimum_score)
-        rows = await session.execute(statement.limit(limit))
+        if minimum_coverage is not None:
+            statement = statement.where(Evaluation.evidence_coverage >= minimum_coverage)
+        if status:
+            statement = statement.where(Evaluation.status.in_(status))
+        if outcome:
+            statement = statement.where(
+                Evaluation.id.in_(
+                    select(RequirementAssessment.evaluation_id).where(
+                        RequirementAssessment.evaluation_id == Evaluation.id,
+                        RequirementAssessment.outcome.in_(outcome),
+                    )
+                )
+            )
+        if search.strip():
+            needle = f"%{search.strip()}%"
+            statement = statement.where(
+                CandidateRecord.full_name.ilike(needle)
+                | CandidateRecord.email.ilike(needle)
+            )
+        rows = (await session.execute(statement)).all()
+        if skill.strip():
+            needle = skill.strip().casefold()
+            rows = [
+                row
+                for row in rows
+                if any(
+                    needle in name.casefold()
+                    for name in evaluation_skill_names(row[2])
+                )
+            ]
+        rows = rows[:limit]
         result: list[dict[str, object]] = []
         for evaluation, candidate, version in rows:
             assessments = (
@@ -1401,6 +1440,18 @@ async def list_evaluations(
                 )
             ).all()
             block_texts = await resume_block_texts(session, str(evaluation.resume_version_id))
+            triples = [
+                (
+                    assessment.outcome,
+                    requirement.kind,
+                    requirement.weight,
+                    requirement.normalized_text,
+                )
+                for assessment, requirement in assessments
+            ]
+            contributions = contribution_by_index(
+                [(outcome, kind, weight) for outcome, kind, weight, _ in triples]
+            )
             result.append(
                 {
                     "id": evaluation.id,
@@ -1411,10 +1462,19 @@ async def list_evaluations(
                     "score": evaluation.score,
                     "coverage": evaluation.evidence_coverage,
                     "eligibility": evaluation.eligibility,
+                    "skills": evaluation_skill_names(version),
+                    "hardGates": hard_gate_outcomes(triples),
                     **resume_quality_payload(version),
                     "assessments": [
-                        assessment_payload(assessment, requirement, block_texts)
-                        for assessment, requirement in assessments
+                        assessment_payload(
+                            assessment,
+                            requirement,
+                            block_texts,
+                            contribution,
+                        )
+                        for (assessment, requirement), contribution in zip(
+                            assessments, contributions
+                        )
                     ],
                 }
             )
@@ -1435,6 +1495,116 @@ async def resume_block_texts(session: AsyncSession, version_id: str) -> dict[str
         if block_id:
             texts[str(block_id)] = str(entry.get("text", ""))
     return texts
+
+
+VALID_EVALUATION_STATUSES = frozenset({"pending", "processing", "complete", "failed"})
+VALID_ASSESSMENT_OUTCOMES = frozenset({"met", "partial", "not_met", "unknown"})
+OUTCOME_VALUES = {"met": 1.0, "partial": 0.5, "not_met": 0.0}
+EXPORT_COLUMNS: dict[str, str] = {
+    "candidate_name": "candidate_name",
+    "candidate_email": "candidate_email",
+    "candidate_location": "candidate_location",
+    "status": "status",
+    "score": "score",
+    "eligibility": "eligibility",
+    "evidence_coverage": "evidence_coverage",
+    "quality_state": "quality_state",
+    "quality_warnings": "quality_warnings",
+}
+
+
+def contribution_by_index(
+    assessments: list[tuple[str, str, int]],
+) -> list[float | None]:
+    """Per-requirement share of the aggregate score in percentage points.
+
+    Hard gates never contribute, and unknown outcomes stay outside the
+    confident-score denominator, matching the scoring policy.
+    """
+    confident_weight = sum(
+        weight
+        for outcome, kind, weight in assessments
+        if kind != "hard_gate" and outcome in OUTCOME_VALUES
+    )
+    contributions: list[float | None] = []
+    for outcome, kind, weight in assessments:
+        value = OUTCOME_VALUES.get(outcome)
+        if value is None or kind == "hard_gate" or confident_weight == 0:
+            contributions.append(None)
+        else:
+            contributions.append(round(value * weight / confident_weight * 100, 1))
+    return contributions
+
+
+def hard_gate_outcomes(
+    assessments: list[tuple[str, str, int, str]],
+) -> list[dict[str, object]]:
+    return [
+        {"requirement": text, "outcome": outcome}
+        for outcome, kind, _weight, text in assessments
+        if kind == "hard_gate"
+    ]
+
+
+def evaluation_skill_names(version: ResumeVersion) -> list[str]:
+    facts = version.normalized_facts if isinstance(version.normalized_facts, dict) else {}
+    skills = facts.get("skills")
+    if not isinstance(skills, list):
+        return []
+    names = {
+        str(cast(dict[str, object], skill).get("canonicalName")).strip()
+        for skill in cast(list[object], skills)
+        if isinstance(skill, dict)
+        and cast(dict[str, object], skill).get("canonicalName")
+    }
+    return sorted(names, key=str.casefold)
+
+
+def export_row_values(
+    evaluation: Evaluation,
+    candidate: CandidateRecord,
+    quality: dict[str, object],
+) -> dict[str, str]:
+    return {
+        "candidate_name": candidate.full_name or "",
+        "candidate_email": candidate.email or "",
+        "candidate_location": candidate.location or "",
+        "status": evaluation.status,
+        "score": str(evaluation.score) if evaluation.score is not None else "",
+        "eligibility": evaluation.eligibility,
+        "evidence_coverage": (
+            str(evaluation.evidence_coverage)
+            if evaluation.evidence_coverage is not None
+            else ""
+        ),
+        "quality_state": str(quality["qualityState"]),
+        "quality_warnings": "; ".join(
+            cast(list[str], quality["qualityWarnings"])
+        ),
+    }
+
+
+def resolve_export_columns(
+    columns: list[str] | None, labels: list[str] | None
+) -> list[tuple[str, str]]:
+    keys = list(dict.fromkeys(columns)) if columns else list(EXPORT_COLUMNS)
+    unknown = [key for key in keys if key not in EXPORT_COLUMNS]
+    if unknown:
+        raise APIError(
+            400,
+            "INVALID_REQUEST",
+            f"Unknown export column: {unknown[0]}",
+        )
+    headers = list(EXPORT_COLUMNS[key] for key in keys)
+    if labels:
+        if len(labels) != len(keys):
+            raise APIError(
+                400,
+                "INVALID_REQUEST",
+                "Export labels must match the selected columns",
+            )
+        headers = [label.strip() or EXPORT_COLUMNS[key] for label, key in zip(labels, keys)]
+    return list(zip(keys, headers))
 
 
 def resume_quality_payload(version: ResumeVersion) -> dict[str, object]:
@@ -1470,10 +1640,14 @@ def assessment_payload(
     assessment: RequirementAssessment,
     requirement: JobRequirement,
     block_texts: dict[str, str],
+    contribution: float | None = None,
 ) -> dict[str, object]:
     return {
         "requirement": requirement.normalized_text,
         "outcome": assessment.outcome,
+        "kind": requirement.kind,
+        "weight": requirement.weight,
+        "contribution": contribution,
         "reasoning": assessment.reasoning,
         "evidence": assessment.evidence,
         "semanticEvidence": evidence_with_text(assessment.semantic_evidence, block_texts),
@@ -1486,8 +1660,11 @@ def evidence_with_text(
 ) -> dict[str, object] | None:
     if not isinstance(evidence, dict):
         return None
-    resolved = {key: value for key, value in evidence.items() if key != "matches"}
-    matches = evidence.get("matches")
+    source = cast(dict[str, object], evidence)
+    resolved: dict[str, object] = {
+        key: value for key, value in source.items() if key != "matches"
+    }
+    matches = source.get("matches")
     if isinstance(matches, list):
         with_text: list[object] = []
         for entry in cast(list[object], matches):
@@ -1500,7 +1677,6 @@ def evidence_with_text(
     return resolved
 
 
-@router.get("/api/jobs/{job_id}/evaluations.csv")
 def csv_safe(value: object) -> str:
 	# Neutralizes spreadsheet formula injection for cells that begin with a
 	# formula, command, or whitespace-prefixed formula character.
@@ -1510,9 +1686,16 @@ def csv_safe(value: object) -> str:
 	return text
 
 
-async def export_evaluations_csv(job_id: str, request: Request) -> Response:
+@router.get("/api/jobs/{job_id}/evaluations.csv")
+async def export_evaluations_csv(
+    job_id: str,
+    request: Request,
+    columns: list[str] | None = Query(default=None),
+    labels: list[str] | None = Query(default=None),
+) -> Response:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
+    resolved = resolve_export_columns(columns, labels)
     async with store.sessions()() as session:
         job = await session.get(Job, job_id)
         if job is None:
@@ -1528,34 +1711,12 @@ async def export_evaluations_csv(job_id: str, request: Request) -> Response:
         )
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(
-            [
-                "candidate_name",
-                "status",
-                "score",
-                "eligibility",
-                "evidence_coverage",
-                "quality_state",
-                "quality_warnings",
-            ]
-        )
+        writer.writerow([csv_safe(header) for _key, header in resolved])
         for evaluation, candidate, version in rows:
-            quality = resume_quality_payload(version)
-            writer.writerow(
-                [
-                    csv_safe(candidate.full_name or ""),
-                    csv_safe(evaluation.status),
-                    csv_safe(evaluation.score if evaluation.score is not None else ""),
-                    csv_safe(evaluation.eligibility),
-                    csv_safe(
-                        evaluation.evidence_coverage
-                        if evaluation.evidence_coverage is not None
-                        else ""
-                    ),
-                    csv_safe(quality["qualityState"]),
-                    csv_safe("; ".join(cast(list[str], quality["qualityWarnings"]))),
-                ]
+            values = export_row_values(
+                evaluation, candidate, resume_quality_payload(version)
             )
+            writer.writerow([csv_safe(values[key]) for key, _header in resolved])
     return Response(
         output.getvalue(),
         media_type="text/csv",

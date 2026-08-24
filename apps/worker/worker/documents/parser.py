@@ -166,21 +166,42 @@ def extract_pdf_blocks(content: bytes) -> ParsedDocument:
 
 def pdf_page_fragments(page: object) -> list[PdfFragment]:
 	fragments: list[PdfFragment] = []
+	font_size = 12.0
 
-	def visitor(
-		text: object, cm: object, tm: object, font_dict: object, font_size: object
-	) -> None:
-		clean = str(text).strip()
-		if not clean:
+	def visitor_before(operator: object, operands: object, cm: object, tm: object) -> None:
+		nonlocal font_size
+		# visitor_text receives memoized positions that reset at every BT;
+		# the operand hook reports the live text matrix for each show-text
+		# operator instead.
+		if operator == b"Tf":
+			settings = cast(list[object], operands)
+			if len(settings) > 1 and isinstance(settings[1], (int, float)):
+				font_size = float(settings[1])
+			return
+		if operator not in (b"Tj", b"TJ", b"'", b'"'):
+			return
+		text = shown_text(cast(list[object], operands))
+		if not text.strip():
 			return
 		matrix = cast(list[object], tm)
-		x = float(cast(float, matrix[4]))
-		y = float(cast(float, matrix[5]))
-		size = float(font_size) if isinstance(font_size, (int, float)) else 12.0
-		fragments.append(PdfFragment(clean, x, y, size))
+		fragments.append(
+			PdfFragment(text.strip(), float(matrix[4]), float(matrix[5]), font_size)
+		)
 
-	cast(object, page).extract_text(visitor_text=visitor)  # type: ignore[attr-defined]
+	cast("PdfPage", page).extract_text(visitor_operand_before=visitor_before)
 	return fragments
+
+
+def shown_text(operands: list[object]) -> str:
+	parts: list[str] = []
+	for operand in operands:
+		if isinstance(operand, str):
+			parts.append(operand)
+		elif isinstance(operand, list):
+			for entry in cast(list[object], operand):
+				if isinstance(entry, str):
+					parts.append(entry)
+	return "".join(parts)
 
 
 def fragment_width(fragment: PdfFragment) -> float:
@@ -203,21 +224,20 @@ def group_pdf_lines(fragments: list[PdfFragment]) -> list[list[PdfFragment]]:
 def column_boundaries_for(fragments: list[PdfFragment]) -> list[float]:
 	if len(fragments) < 4:
 		return []
-	ordered_x = sorted(fragment.x for fragment in fragments)
-	split_indexes = [
-		index
-		for index in range(len(ordered_x) - 1)
-		if ordered_x[index + 1] - ordered_x[index] > PDF_CLUSTER_GAP_POINTS
+	ordered = sorted(fragments, key=lambda fragment: fragment.x)
+	clusters: list[list[PdfFragment]] = [[ordered[0]]]
+	for fragment in ordered[1:]:
+		if fragment.x - clusters[-1][-1].x > PDF_CLUSTER_GAP_POINTS:
+			clusters.append([fragment])
+		else:
+			clusters[-1].append(fragment)
+	# A region holding a single fragment cannot anchor a layout boundary.
+	if len(clusters) < 2 or any(len(cluster) < 2 for cluster in clusters):
+		return []
+	return [
+		(clusters[index][-1].x + clusters[index + 1][0].x) / 2
+		for index in range(len(clusters) - 1)
 	]
-	boundaries = [
-		(ordered_x[index] + ordered_x[index + 1]) / 2 for index in split_indexes
-	]
-	minimum_side = len(ordered_x) / 4
-	for boundary in boundaries:
-		left_count = sum(1 for x in ordered_x if x <= boundary)
-		if left_count < minimum_side or len(ordered_x) - left_count < minimum_side:
-			return []
-	return boundaries
 
 
 def ordered_pdf_lines(
@@ -225,11 +245,15 @@ def ordered_pdf_lines(
 ) -> list[tuple[int, list[PdfFragment]]]:
 	fragments = [fragment for line in lines for fragment in line]
 	boundaries = column_boundaries_for(fragments)
-	if not boundaries:
-		return [(0, line) for line in sorted(lines, key=lambda line: -line[0].y)]
+	row_major = [(0, line) for line in sorted(lines, key=lambda line: -line[0].y)]
+	# Two or more aligned regions across the page indicate a table; keep
+	# visual row order. One boundary indicates columns or a sidebar.
+	if len(boundaries) != 1:
+		return row_major
+	boundary = boundaries[0]
 
 	def column_of(x: float) -> int:
-		return sum(1 for boundary in boundaries if x > boundary)
+		return 1 if x > boundary else 0
 
 	ordered: list[tuple[int, list[PdfFragment]]] = []
 	for line in lines:

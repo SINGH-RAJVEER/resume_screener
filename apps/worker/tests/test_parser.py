@@ -195,6 +195,60 @@ def test_orders_two_column_pdf_left_column_first_with_bboxes() -> None:
 	assert right_bbox[1] < right_bbox[3]
 
 
+def test_orders_table_pdf_rows_before_columns() -> None:
+	parsed = extract_blocks(
+		pdf_with_placed_lines(
+			[
+				[
+					(72, 720, "Skill"),
+					(250, 720, "Years"),
+					(420, 720, "Level"),
+					(72, 690, "Python"),
+					(250, 690, "5"),
+					(420, 690, "Expert"),
+					(72, 660, "Kubernetes"),
+					(250, 660, "3"),
+					(420, 660, "Advanced"),
+				]
+			]
+		),
+		"application/pdf",
+	)
+
+	assert [block["text"] for block in parsed["blocks"]] == [
+		"Skill Years Level",
+		"Python 5 Expert",
+		"Kubernetes 3 Advanced",
+	]
+
+
+def test_orders_sidebar_pdf_after_the_main_column() -> None:
+	parsed = extract_blocks(
+		pdf_with_placed_lines(
+			[
+				[
+					(72, 740, "Ada Lovelace"),
+					(72, 720, "Senior platform engineer at Example Corp."),
+					(72, 700, "Built and operated Python services."),
+					(72, 680, "Led the platform team since 2020."),
+					(480, 740, "SKILLS"),
+					(480, 720, "Python and Kubernetes."),
+				]
+			]
+		),
+		"application/pdf",
+	)
+
+	texts = [block["text"] for block in parsed["blocks"]]
+	assert texts[0] == (
+		"Ada Lovelace\n"
+		"Senior platform engineer at Example Corp.\n"
+		"Built and operated Python services.\n"
+		"Led the platform team since 2020."
+	)
+	assert texts[-1] == "SKILLS\nPython and Kubernetes."
+
+
 def test_merges_close_single_column_pdf_lines_into_one_block() -> None:
 	parsed = extract_blocks(
 		pdf_with_placed_lines(
