@@ -46,8 +46,8 @@ def load_settings() -> WorkerSettings:
 		or "openai/gpt-5-mini",
 		embedding_model=os.environ.get("OPENROUTER_EMBEDDING_MODEL", "")
 		or "qwen/qwen3-embedding-8b",
-		timeout_seconds=float(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "90")),
-		max_output_tokens=int(os.environ.get("OPENROUTER_MAX_OUTPUT_TOKENS", "4096")),
+		timeout_seconds=float(os.environ.get("OPENROUTER_TIMEOUT_SECONDS") or "90"),
+		max_output_tokens=int(os.environ.get("OPENROUTER_MAX_OUTPUT_TOKENS") or "4096"),
 	)
 	return WorkerSettings(
 		database_url=database_url,
