@@ -93,7 +93,6 @@ export const InvitationUpload = () => {
 		<main className="candidate-page">
 			<header className="candidate-header">
 				<div className="brand-mark">
-					<span>rs</span>
 					<span className="brand-name">SkillSignal</span>
 				</div>
 				<span>{session.user.name}</span>

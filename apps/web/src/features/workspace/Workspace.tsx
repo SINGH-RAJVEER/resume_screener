@@ -620,7 +620,6 @@ export const Workspace = () => {
 			<header className="workspace-header">
 				<div className="workspace-header-left">
 					<a href="/" className="brand-mark">
-						<span>rs</span>
 						<span className="brand-name">SkillSignal</span>
 					</a>
 					{organization && (
