@@ -1,7 +1,7 @@
 """add lexical evidence to requirement assessments
 
 Revision ID: c5e9f7a2d810
-Revises: 7a1c2d9e4b05
+Revises: c4f2e8a91370
 Create Date: 2026-08-25
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision: str = "c5e9f7a2d810"
-down_revision: str | None = "7a1c2d9e4b05"
+down_revision: str | None = "c4f2e8a91370"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
