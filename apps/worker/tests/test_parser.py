@@ -160,6 +160,19 @@ def test_rejects_malformed_pdf() -> None:
 		extract_blocks(b"%PDF-1.7\nnot a complete PDF", "application/pdf")
 
 
+def test_wraps_malformed_pdf_page_metadata_in_a_safe_error() -> None:
+	content = pdf_with_pages(
+		"Ada Lovelace, Python engineer with ten years of experience."
+	)
+	content = content.replace(
+		b"/MediaBox [ 0.0 0.0 612 792 ]",
+		b"/MediaBox [ 0.0 0.0 bad 792 ]",
+	)
+
+	with pytest.raises(DocumentParseError, match="could not be parsed"):
+		extract_blocks(content, "application/pdf")
+
+
 def test_rejects_pdf_with_excessive_page_dimensions() -> None:
 	with pytest.raises(DocumentParseError, match="page dimensions"):
 		extract_blocks(

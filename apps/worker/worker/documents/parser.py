@@ -79,25 +79,28 @@ def extract_blocks(content: bytes, media_type: str) -> ParsedDocument:
 def extract_pdf_blocks(content: bytes) -> ParsedDocument:
 	try:
 		reader = PdfReader(BytesIO(content), strict=True)
+		if reader.is_encrypted:
+			raise DocumentParseError("Encrypted resume PDFs are not supported")
+		pages = list(reader.pages)
+		if len(pages) > MAX_PAGES:
+			raise DocumentParseError("Resume PDF exceeds 100 pages")
+		for page in pages:
+			width = float(page.mediabox.width)
+			height = float(page.mediabox.height)
+			if (
+				width <= 0
+				or height <= 0
+				or width > MAX_PDF_PAGE_DIMENSION_POINTS
+				or height > MAX_PDF_PAGE_DIMENSION_POINTS
+			):
+				raise DocumentParseError("Resume PDF has unsupported page dimensions")
+	except DocumentParseError:
+		raise
 	except Exception as error:
 		raise DocumentParseError("Resume PDF could not be parsed") from error
-	if reader.is_encrypted:
-		raise DocumentParseError("Encrypted resume PDFs are not supported")
-	if len(reader.pages) > MAX_PAGES:
-		raise DocumentParseError("Resume PDF exceeds 100 pages")
-	for page in reader.pages:
-		width = float(page.mediabox.width)
-		height = float(page.mediabox.height)
-		if (
-			width <= 0
-			or height <= 0
-			or width > MAX_PDF_PAGE_DIMENSION_POINTS
-			or height > MAX_PDF_PAGE_DIMENSION_POINTS
-		):
-			raise DocumentParseError("Resume PDF has unsupported page dimensions")
 	page_text: list[str] = []
 	try:
-		for page in reader.pages:
+		for page in pages:
 			page_text.append(normalize_text(page.extract_text() or "", allow_empty=True))
 	except Exception as error:
 		raise DocumentParseError("Resume PDF text could not be extracted") from error
