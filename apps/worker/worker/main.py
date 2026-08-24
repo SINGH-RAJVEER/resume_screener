@@ -577,6 +577,7 @@ class Worker:
 					score=score,
 					suggestions=merge_suggestions(suggestions, extra_suggestions),
 					model_extraction_used=True,
+					job_description_text=job_description,
 				)
 				return
 		score, suggestions = independent_report(normalized_facts, job_description)
@@ -587,6 +588,7 @@ class Worker:
 			score=score,
 			suggestions=suggestions,
 			model_extraction_used=False,
+			job_description_text=job_description,
 		)
 
 	async def _store_independent_report(
@@ -598,6 +600,7 @@ class Worker:
 		score: int,
 		suggestions: list[dict[str, object]],
 		model_extraction_used: bool,
+		job_description_text: str | None,
 	) -> None:
 		improved_key = f"independent-resumes/improved/{evaluation_id}.docx"
 		try:
@@ -615,6 +618,7 @@ class Worker:
 					SET status = 'complete', score = :score,
 						suggestions = CAST(:suggestions AS jsonb),
 						normalized_facts = CAST(:normalized_facts AS jsonb),
+						job_description = COALESCE(job_description, :job_description),
 						improved_resume_key = :improved_key,
 						improved_resume_unlocked_at = now(),
 						parser_version = :parser_version,
@@ -638,6 +642,7 @@ class Worker:
 					"score": score,
 					"suggestions": json.dumps(suggestions),
 					"normalized_facts": json.dumps(dict(facts)),
+					"job_description": job_description_text,
 					"improved_key": improved_key,
 					"parser_version": LOCAL_PARSER_VERSION,
 					"parser_configuration_version": PARSER_CONFIGURATION_VERSION,
