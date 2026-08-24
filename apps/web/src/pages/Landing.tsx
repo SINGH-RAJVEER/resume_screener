@@ -49,7 +49,6 @@ export const Landing = () => (
 		</header>
 
 		<section className="public-hero">
-			<p className="eyebrow">Evidence-backed screening</p>
 			<h1>Resume evaluation with evidence.</h1>
 			<p className="hero-copy">
 				Scores are only as good as their proof. Every evaluation quotes
