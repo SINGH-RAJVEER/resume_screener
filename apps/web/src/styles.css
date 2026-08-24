@@ -135,6 +135,97 @@ p {
 	gap: 0.5rem;
 }
 
+.landing-flow,
+.landing-audiences {
+	margin: 0 auto;
+	max-width: 72rem;
+	padding: 0 1.5rem 5rem;
+}
+.public-hero {
+	padding-bottom: 6rem;
+}
+
+.landing-steps {
+	border-top: 1px solid var(--ink);
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	list-style: none;
+	margin: 1.25rem 0 0;
+	padding: 0;
+}
+.landing-step {
+	border-bottom: 1px solid var(--rule);
+	display: grid;
+	gap: 0.5rem;
+	align-content: start;
+	padding: 1.25rem 1.25rem 2rem 0;
+}
+.landing-step + .landing-step {
+	border-left: 1px solid var(--rule);
+	padding-left: 1.25rem;
+}
+.landing-step-index {
+	color: var(--muted);
+	font-size: 0.6875rem;
+	letter-spacing: 0.08em;
+}
+.landing-step strong {
+	font-size: 0.9375rem;
+	font-weight: 600;
+}
+.landing-step p {
+	color: var(--muted);
+	font-size: 0.8125rem;
+	margin: 0;
+	max-width: 24rem;
+}
+
+.landing-audiences {
+	border-top: 1px solid var(--ink);
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	padding-top: 1.25rem;
+}
+.landing-audience {
+	display: grid;
+	gap: 0.75rem;
+	align-content: start;
+	justify-items: start;
+	padding-right: 3rem;
+}
+.landing-audience h2 {
+	font-size: clamp(1.5rem, 3vw, 2.25rem);
+	font-weight: 400;
+	letter-spacing: -0.03em;
+	line-height: 1.05;
+	margin: 0;
+}
+.landing-audience p:not(.eyebrow) {
+	color: var(--muted);
+	font-size: 0.8125rem;
+	margin: 0;
+	max-width: 28rem;
+}
+
+.public-footer {
+	align-items: center;
+	border-top: 1px solid var(--ink);
+	display: flex;
+	font-size: 0.6875rem;
+	gap: 1.5rem;
+	justify-content: space-between;
+	margin: 0 auto;
+	max-width: 72rem;
+	padding: 1rem 1.5rem 2rem;
+	width: 100%;
+}
+.public-footer span {
+	color: var(--muted);
+}
+.public-footer a {
+	color: var(--ink);
+}
+
 .auth-page {
 	display: grid;
 	min-height: 100svh;
@@ -1213,8 +1304,26 @@ p {
 		display: none;
 	}
 	.public-hero,
-	.candidate-content {
+	.candidate-content,
+	.landing-flow,
+	.landing-audiences {
 		padding: 4rem 1rem;
+	}
+	.landing-steps {
+		grid-template-columns: 1fr;
+	}
+	.landing-step + .landing-step {
+		border-left: 0;
+		padding-left: 0;
+	}
+	.landing-audiences {
+		grid-template-columns: 1fr;
+		gap: 3rem;
+	}
+	.public-footer {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.5rem;
 	}
 	.account-type-control {
 		grid-template-columns: 1fr;
