@@ -3,7 +3,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from ..documents.vocabulary import mentioned_skills
+from ..documents.vocabulary import load_vocabulary, mentioned_skills
 from .intervals import employment_intervals
 
 YEARS_PATTERN = re.compile(r"(\d+)\s*\+?\s*years?", re.IGNORECASE)
@@ -232,15 +232,6 @@ def assess_criterion(
 			[],
 		)
 	if criterion_type == "experience":
-		subjects = criterion.get("subjects")
-		if isinstance(subjects, list) and subjects:
-			return Assessment(
-				requirement_id,
-				"unknown",
-				0,
-				"The resume does not establish a dated duration for the required subject.",
-				[],
-			)
 		minimum_months = criterion.get("minimumMonths")
 		if not isinstance(minimum_months, int):
 			return Assessment(
@@ -249,6 +240,15 @@ def assess_criterion(
 				0,
 				"Experience threshold is invalid.",
 				[],
+			)
+		subjects = criterion.get("subjects")
+		if isinstance(subjects, list) and subjects:
+			return assess_subject_experience(
+				requirement_id,
+				[str(subject) for subject in subjects],
+				minimum_months,
+				skills,
+				facts,
 			)
 		return assess_experience_months(requirement_id, minimum_months, facts)
 	if criterion_type == "education":
@@ -304,6 +304,8 @@ def combine_criterion_assessments(
 			else "The complete requirement cannot be established from the resume."
 		)
 	confidence = min((criterion.confidence for criterion in criteria), default=0)
+	if len(criteria) == 1:
+		return Assessment(requirement_id, outcome, confidence, criteria[0].reasoning, evidence)
 	return Assessment(requirement_id, outcome, confidence, reasoning, evidence)
 
 
@@ -370,6 +372,85 @@ def assess_experience_months(
 		f"Documented employment totals {years_text} against {needed_years:g} years required."
 	)
 	return Assessment(requirement_id, outcome, 1 if outcome != "unknown" else 0, reasoning, [])
+
+
+def assess_subject_experience(
+	requirement_id: str,
+	subjects: Sequence[str],
+	needed_months: int,
+	skills: Mapping[str, list[str]],
+	facts: Mapping[str, Any],
+) -> Assessment:
+	total_months = dated_subject_months(subjects, skills, facts)
+	if total_months is None:
+		return Assessment(
+			requirement_id,
+			"unknown",
+			0,
+			"The resume does not establish a dated duration for the required subject.",
+			[],
+		)
+	if total_months >= needed_months:
+		outcome = "met"
+	elif total_months >= needed_months // 2:
+		outcome = "partial"
+	else:
+		outcome = "unknown"
+	label = ", ".join(dict.fromkeys(subject.strip() or "the subject" for subject in subjects))
+	reasoning = (
+		f"Dated evidence for {label} totals {total_months // 12}y {total_months % 12}m "
+		f"against {needed_months / 12:g} years required."
+	)
+	return Assessment(requirement_id, outcome, 1 if outcome != "unknown" else 0, reasoning, [])
+
+
+def dated_subject_months(
+	subjects: Sequence[str],
+	skills: Mapping[str, list[str]],
+	facts: Mapping[str, Any],
+) -> int | None:
+	"""Sum merged months of employment entries whose evidence blocks support the subjects.
+
+	A skill subject matches its documented canonical name; any other subject
+	matches documented skills sharing its taxonomy category, so domain terms
+	such as a database platform family count the skills filed under them.
+	Duration comes only from employment entries citing one of those blocks,
+	and overlapping entries contribute once through interval merging.
+	"""
+	blocks_by_skill = {name.casefold(): set(block_ids) for name, block_ids in skills.items()}
+	categories_by_skill = {
+		str(entry.get("canonicalName") or "").casefold(): str(entry.get("category")).casefold()
+		for entry in _fact_entries(facts.get("skills"))
+		if entry.get("canonicalName") and entry.get("category")
+	}
+	vocabulary = load_vocabulary()
+	matched_blocks: set[str] = set()
+	for subject in subjects:
+		key = subject.strip().casefold()
+		if not key:
+			continue
+		canonical_key = str(vocabulary.phrase_to_canonical.get(key, key)).casefold()
+		if canonical_key in blocks_by_skill:
+			matched_blocks |= blocks_by_skill[canonical_key]
+			continue
+		for name_key, block_ids in blocks_by_skill.items():
+			if categories_by_skill.get(name_key) == key:
+				matched_blocks |= block_ids
+	if not matched_blocks:
+		return None
+	dated_entries = [
+		entry
+		for entry in _fact_entries(facts.get("employment"))
+		if matched_blocks & {
+			str(citation.get("blockId"))
+			for citation in _fact_entries(entry.get("evidence"))
+			if citation.get("blockId")
+		}
+	]
+	intervals = employment_intervals(dated_entries)
+	if not intervals.merged:
+		return None
+	return intervals.total_months
 
 
 def employment_months(entries: object) -> int | None:
@@ -522,3 +603,12 @@ def normalize_credential_name(value: str) -> str:
 
 def outcome_value(outcome: str) -> float:
 	return {"met": 1, "partial": 0.5, "not_met": 0}[outcome]
+
+
+def _fact_entries(value: object) -> list[Mapping[str, Any]]:
+	if not isinstance(value, list):
+		return []
+	return [
+		cast(Mapping[str, Any], item) for item in cast(list[object], value)
+		if isinstance(item, Mapping)
+	]

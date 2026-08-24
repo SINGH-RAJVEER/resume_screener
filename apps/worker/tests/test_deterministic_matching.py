@@ -113,6 +113,127 @@ def test_overlapping_intervals_are_merged() -> None:
 	assert months is not None and 22 <= months <= 26
 
 
+def experience_requirement(
+	subjects: list[str], minimum_months: int, requirement_id: str = "req-exp"
+) -> dict[str, object]:
+	return {
+		"id": requirement_id,
+		"kind": "required",
+		"weight": 2,
+		"normalized_text": f"{minimum_months // 12} years of {', '.join(subjects)}",
+		"predicate": {
+			"operator": "all_of",
+			"criteria": [
+				{
+					"type": "experience",
+					"canonicalName": None,
+					"minimumMonths": minimum_months,
+					"minimumLevel": None,
+					"subjects": subjects,
+				}
+			],
+		},
+	}
+
+
+def test_subject_experience_met_from_dated_skill_evidence() -> None:
+	result = assess_requirement(
+		experience_requirement(["Python"], 24),
+		{"Python": ["p1-b1"]},
+		facts(employment=[
+			{
+				"startDate": "2021-01",
+				"endDate": "2024-01",
+				"isCurrent": False,
+				"evidence": [{"blockId": "p1-b1", "quote": "Python developer"}],
+			}
+		]),
+	)
+	assert result.outcome == "met"
+	assert "Python" in result.reasoning
+
+
+def test_domain_evidence_supports_duration() -> None:
+	result = assess_requirement(
+		experience_requirement(["database"], 24),
+		{"PostgreSQL": ["p2-b3"]},
+		{
+			**facts(employment=[
+				{
+					"startDate": "2022-01",
+					"endDate": "2024-07",
+					"isCurrent": False,
+					"evidence": [{"blockId": "p2-b3", "quote": "PostgreSQL administration"}],
+				}
+			]),
+			"skills": [
+				{
+					"canonicalName": "PostgreSQL",
+					"category": "database",
+					"evidenceBlockIds": ["p2-b3"],
+				}
+			],
+		},
+	)
+	assert result.outcome == "met"
+
+
+def test_short_subject_evidence_stays_partial() -> None:
+	result = assess_requirement(
+		experience_requirement(["Kubernetes"], 24),
+		{"Kubernetes": ["p3-b1"]},
+		facts(employment=[
+			{
+				"startDate": "2023-06",
+				"endDate": "2024-06",
+				"isCurrent": False,
+				"evidence": [{"blockId": "p3-b1", "quote": "Kubernetes operations"}],
+			}
+		]),
+	)
+	assert result.outcome == "partial"
+
+
+def test_undated_skill_mention_stays_unknown() -> None:
+	result = assess_requirement(
+		experience_requirement(["Python"], 12),
+		{"Python": ["p4-b1"]},
+		facts(employment=[
+			# Dated entry cites an unrelated block, so no dated subject evidence.
+			{
+				"startDate": "2020-01",
+				"endDate": "2024-01",
+				"isCurrent": False,
+				"evidence": [{"blockId": "p4-other", "quote": "Warehouse role"}],
+			}
+		]),
+	)
+	assert result.outcome == "unknown"
+
+
+def test_overlapping_dated_entries_count_once() -> None:
+	result = assess_requirement(
+		experience_requirement(["Python"], 24),
+		{"Python": ["p5-b1"]},
+		facts(employment=[
+			{
+				"startDate": "2020-01",
+				"endDate": "2022-01",
+				"isCurrent": False,
+				"evidence": [{"blockId": "p5-b1", "quote": "Python"}],
+			},
+			{
+				"startDate": "2021-01",
+				"endDate": "2023-01",
+				"isCurrent": False,
+				"evidence": [{"blockId": "p5-b1", "quote": "Python services"}],
+			},
+		]),
+	)
+	# Merged coverage is 24 months even though raw entries span 36.
+	assert result.outcome == "met"
+
+
 def test_aggregate_uses_extended_assessments() -> None:
 	result = evaluate(
 		facts(
