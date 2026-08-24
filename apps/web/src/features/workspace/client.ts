@@ -180,10 +180,11 @@ export const workspaceClient = {
 		body.append("title", title);
 		body.append("description", description);
 		if (descriptionFile) body.append("file", descriptionFile);
-		return request<{ id: string; versionId: string; processingJobId: string }>(
-			"/api/jobs",
-			{ method: "POST", body },
-		);
+		return request<{
+			id: string;
+			versionId: string;
+			processingJobId: string;
+		}>("/api/jobs", { method: "POST", body });
 	},
 	confirmRequirements: (jobId: string, requirements: Requirement[]) =>
 		request<{ confirmed: boolean }>(`/api/jobs/${jobId}/requirements`, {

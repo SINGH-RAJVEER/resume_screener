@@ -188,42 +188,42 @@ export const CandidateHome = () => {
 											PDF, DOCX, or TXT.
 										</p>
 									</div>
-								<div className="form-field">
-									<Label htmlFor="job-description">
-										Job description (optional)
-									</Label>
-									<Textarea
-										id="job-description"
-										onChange={(event) =>
-											setJobDescription(
-												event.currentTarget.value,
-											)
-										}
-										placeholder={
-											jobDescriptionFile
-												? "Using the uploaded file. Clear it to paste instead."
-												: "Paste a role description to receive role-specific guidance."
-										}
-										value={jobDescription}
-									/>
-									<Input
-										accept=".pdf,.docx,.txt"
-										id="job-description-file"
-										onChange={(event) => {
-											const selected =
-												event.currentTarget.files?.[0] ??
-												null;
-											setJobDescriptionFile(selected);
-											if (selected)
-												setJobDescription("");
-										}}
-										type="file"
-									/>
-									<p className="form-hint">
-										Paste a description or upload a PDF,
-										DOCX, or TXT file.
-									</p>
-								</div>
+									<div className="form-field">
+										<Label htmlFor="job-description">
+											Job description (optional)
+										</Label>
+										<Textarea
+											id="job-description"
+											onChange={(event) =>
+												setJobDescription(
+													event.currentTarget.value,
+												)
+											}
+											placeholder={
+												jobDescriptionFile
+													? "Using the uploaded file. Clear it to paste instead."
+													: "Paste a role description to receive role-specific guidance."
+											}
+											value={jobDescription}
+										/>
+										<Input
+											accept=".pdf,.docx,.txt"
+											id="job-description-file"
+											onChange={(event) => {
+												const selected =
+													event.currentTarget
+														.files?.[0] ?? null;
+												setJobDescriptionFile(selected);
+												if (selected)
+													setJobDescription("");
+											}}
+											type="file"
+										/>
+										<p className="form-hint">
+											Paste a description or upload a PDF,
+											DOCX, or TXT file.
+										</p>
+									</div>
 									<Button
 										disabled={!privateResume || isWorking}
 										type="submit"

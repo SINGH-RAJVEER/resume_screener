@@ -1070,8 +1070,7 @@ export const Workspace = () => {
 								id="create-job-description-file"
 								onChange={(event) => {
 									const selected =
-										event.currentTarget.files?.[0] ??
-										null;
+										event.currentTarget.files?.[0] ?? null;
 									setDescriptionFile(selected);
 									if (selected) setDescription("");
 								}}

@@ -28,7 +28,8 @@ export const candidateClient = {
 		const body = new FormData();
 		body.append("file", file);
 		body.append("job_description", jobDescription);
-		if (jobDescriptionFile) body.append("job_description_file", jobDescriptionFile);
+		if (jobDescriptionFile)
+			body.append("job_description_file", jobDescriptionFile);
 		return request<{ id: string; processingJobId: string }>(
 			"/api/independent-evaluations",
 			{ method: "POST", body },
