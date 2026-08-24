@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
@@ -1304,6 +1304,12 @@ async def delete_independent_evaluation(evaluation_id: str, request: Request) ->
         storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
         for storage_key in independent_evaluation_storage_keys(evaluation):
             storage.delete(storage_key)
+        await session.execute(
+            delete(ProcessingJob).where(
+                ProcessingJob.type == "independent_evaluation_processing",
+                ProcessingJob.payload_reference == evaluation.id,
+            )
+        )
         await session.delete(evaluation)
 
 
