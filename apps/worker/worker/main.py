@@ -4,12 +4,14 @@ import json
 import logging
 import random
 import secrets
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -29,6 +31,14 @@ from .extraction.extractor import (
 from .job_descriptions.compiler import compile_job_description
 from .job_descriptions.extractor import extract_job_requirements
 from .providers.openrouter import OpenRouterClient, OpenRouterError
+from .telemetry import (
+	instrument_engine,
+	instrument_httpx_clients,
+	record_job_outcome,
+	setup_telemetry,
+	shutdown_telemetry,
+	tracer,
+)
 
 logger = logging.getLogger("resume-screener.worker")
 
@@ -71,15 +81,33 @@ class Worker:
 		job = await self._claim()
 		if job is None:
 			return False
-		try:
-			await self._dispatch(job)
-		except NonRetryableJobError as error:
-			await self._fail(job, str(error), retryable=False)
-		except Exception:
-			logger.exception("processing job failed", extra={"job_id": job.id, "type": job.type})
-			await self._fail(job, "Processing failed", retryable=True)
-		else:
-			await self._complete(job)
+		started = time.monotonic()
+		outcome = "completed"
+		with tracer.start_as_current_span(
+			"process_job",
+			attributes={
+				"resume_screener.job.id": job.id,
+				"resume_screener.job.type": job.type,
+				"resume_screener.job.attempt": job.attempt_count,
+			},
+		) as span:
+			try:
+				await self._dispatch(job)
+			except NonRetryableJobError as error:
+				span.set_status(Status(StatusCode.ERROR, str(error)))
+				await self._fail(job, str(error), retryable=False)
+				outcome = "failed_non_retryable"
+			except Exception as error:
+				logger.exception(
+					"processing job failed", extra={"job_id": job.id, "type": job.type}
+				)
+				span.record_exception(error)
+				span.set_status(Status(StatusCode.ERROR, "Processing failed"))
+				await self._fail(job, "Processing failed", retryable=True)
+				outcome = "failed"
+			else:
+				await self._complete(job)
+		record_job_outcome(job.type, outcome, time.monotonic() - started)
 		return True
 
 	async def _claim(self) -> ClaimedJob | None:
@@ -775,11 +803,16 @@ class Worker:
 async def main() -> None:
 	logging.basicConfig(level=logging.INFO)
 	settings = load_settings()
+	telemetry_on = setup_telemetry()
 	engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 	try:
+		if telemetry_on:
+			instrument_engine(engine)
+			instrument_httpx_clients()
 		await Worker(engine, settings).run()
 	finally:
 		await engine.dispose()
+		shutdown_telemetry()
 
 
 if __name__ == "__main__":
