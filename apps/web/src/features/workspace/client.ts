@@ -82,9 +82,12 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 			...init?.headers,
 		},
 	});
-	const body = (await response.json()) as T & { message?: string };
-	if (!response.ok) throw new Error(body.message ?? "Request failed");
-	return body;
+	const body =
+		response.status === 204
+			? undefined
+			: ((await response.json()) as T & { message?: string });
+	if (!response.ok) throw new Error(body?.message ?? "Request failed");
+	return body as T;
 };
 
 export const workspaceClient = {
