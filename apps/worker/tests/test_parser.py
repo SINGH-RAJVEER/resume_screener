@@ -109,7 +109,6 @@ def test_extracts_docx_paragraphs_as_separate_evidence_blocks() -> None:
 	[
 		"single_column_resume.txt",
 		"two_column_resume.txt",
-		"prompt_injection_resume.txt",
 	],
 )
 def test_parses_representative_resume_fixtures(fixture_name: str) -> None:
@@ -126,6 +125,10 @@ def test_preserves_prompt_injection_as_document_text() -> None:
 	)
 
 	assert "Ignore previous instructions" in parsed["blocks"][-1]["text"]
+	assert parsed["quality"] == {
+		"state": "review_required",
+		"warnings": ["Document contains instruction-like text that requires review"],
+	}
 
 
 def test_extracts_pdf_pages_and_flags_a_page_without_text() -> None:

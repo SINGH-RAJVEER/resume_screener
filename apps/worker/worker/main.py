@@ -15,8 +15,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
-from .documents.normalizer import normalize_resume
-from .documents.parser import DocumentParseError, extract_blocks
+from .documents.parser import DocumentParseError
+from .documents.processing import add_document_warnings, prepare_document
 from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
@@ -51,6 +51,9 @@ from .versions import (
 )
 
 logger = logging.getLogger("skillsignal.worker")
+DETERMINISTIC_EXTRACTION_WARNING = (
+	"Structured extraction was unavailable; only deterministic facts were used"
+)
 
 
 class NonRetryableJobError(Exception):
@@ -68,14 +71,21 @@ class ClaimedJob:
 
 
 def extract_document_text(content: bytes, media_type: str) -> str:
-	blocks = extract_blocks(content, media_type)["blocks"]
+	prepared = prepare_document(content, media_type)
+	if prepared.quality_state != "ready":
+		raise DocumentParseError(document_quality_error("Document", prepared.warnings))
 	texts: list[str] = []
-	for raw_block in cast(list[object], blocks):
+	for raw_block in cast(list[object], prepared.blocks):
 		if not isinstance(raw_block, Mapping):
 			continue
 		block = cast(Mapping[str, object], raw_block)
 		texts.append(str(block.get("text", "")).strip())
 	return "\n\n".join(text for text in texts if text)
+
+
+def document_quality_error(label: str, warnings: Sequence[str]) -> str:
+	detail = "; ".join(warnings) if warnings else "Extraction quality was too low"
+	return f"{label} could not be read reliably. {detail}. Upload a clearer digital document"
 
 
 class Worker:
@@ -201,13 +211,17 @@ class Worker:
 			raise NonRetryableJobError("Resume version not found")
 		content = self._read_object(str(row["storage_key"]))
 		try:
-			blocks = extract_blocks(content, str(row["media_type"]))
+			prepared = prepare_document(content, str(row["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
-		block_list = blocks["blocks"]
-		normalized_facts = normalize_resume(block_list)
+		block_list = prepared.blocks
+		normalized_facts = prepared.normalized_facts
 		extracted_facts: Mapping[str, object] | None = None
-		if self._openrouter is not None:
+		if prepared.quality_state == "ready" and self._openrouter is None:
+			normalized_facts = add_document_warnings(
+				normalized_facts, [DETERMINISTIC_EXTRACTION_WARNING]
+			)
+		elif prepared.quality_state == "ready" and self._openrouter is not None:
 			try:
 					extracted = await extract_resume_facts(
 						self._openrouter,
@@ -220,15 +234,26 @@ class Worker:
 					"model extraction failed; using deterministic facts",
 					extra={"job_id": job.id, "reason": str(error)},
 				)
+				normalized_facts = add_document_warnings(
+					normalized_facts, [DETERMINISTIC_EXTRACTION_WARNING]
+				)
 			else:
 				extracted_facts = extracted
-				normalized_facts = merge_facts(normalized_facts, extracted, block_list)
-		await self._store_parsed_resume(
+				normalized_facts = add_document_warnings(
+					merge_facts(normalized_facts, extracted, block_list),
+					prepared.warnings,
+				)
+		stored = await self._store_parsed_resume(
 			job,
-			blocks=blocks,
+			blocks=prepared.artifact,
 			structured_facts=extracted_facts,
 			normalized_facts=normalized_facts,
+			quality_state=prepared.quality_state,
 		)
+		if not stored or prepared.quality_state != "ready":
+			return
+		await self._store_block_embeddings(job)
+		await self._queue_evaluations(job)
 
 	async def _store_parsed_resume(
 		self,
@@ -237,16 +262,17 @@ class Worker:
 		blocks: Mapping[str, object],
 		structured_facts: Mapping[str, object] | None,
 		normalized_facts: Mapping[str, object],
-	) -> None:
+		quality_state: str,
+	) -> bool:
 		async with self._engine.begin() as connection:
-			await connection.execute(
+			result = await connection.execute(
 				text(
 					"""
 					UPDATE resume_version
 					SET extraction_blocks = CAST(:blocks AS jsonb),
 						structured_facts = CAST(:structured_facts AS jsonb),
 						normalized_facts = CAST(:normalized_facts AS jsonb),
-						quality_state = 'ready',
+						quality_state = :quality_state,
 						parser_version = :parser_version,
 						parser_configuration_version = :parser_configuration_version,
 						schema_version = :schema_version,
@@ -257,12 +283,14 @@ class Worker:
 							WHERE id = :job_id AND lease_token = :lease_token
 								AND lease_expires_at > now()
 						)
+					RETURNING id
 					"""
 				),
 				{
 					"blocks": json.dumps(blocks),
 					"structured_facts": json.dumps(dict(structured_facts or {})),
 					"normalized_facts": json.dumps(normalized_facts),
+					"quality_state": quality_state,
 					"parser_version": LOCAL_PARSER_VERSION,
 					"parser_configuration_version": PARSER_CONFIGURATION_VERSION,
 					"schema_version": RESUME_FACTS_SCHEMA_VERSION,
@@ -274,6 +302,22 @@ class Worker:
 					"lease_token": job.lease_token,
 				},
 			)
+			if result.scalar_one_or_none() is None:
+				return False
+			if quality_state != "ready":
+				await connection.execute(
+					text(
+						"""
+						UPDATE evaluation
+						SET status = 'complete', score = NULL, evidence_coverage = NULL,
+							eligibility = 'needs_review', quality_state = :quality_state,
+							completed_at = now()
+						WHERE resume_version_id = :version_id
+						"""
+					),
+					{"quality_state": quality_state, "version_id": job.payload_reference},
+				)
+				return True
 			contact = normalized_facts["contact"]
 			if not isinstance(contact, Mapping):
 				raise NonRetryableJobError("Resume contact facts are invalid")
@@ -296,9 +340,28 @@ class Worker:
 					"version_id": job.payload_reference,
 				},
 			)
+		return True
+
+	async def _queue_evaluations(self, job: ClaimedJob) -> None:
+		async with self._engine.begin() as connection:
 			result = await connection.execute(
-				text("SELECT id FROM evaluation WHERE resume_version_id = :resume_version_id"),
-				{"resume_version_id": job.payload_reference},
+				text(
+					"""
+					SELECT evaluation.id
+					FROM evaluation
+					WHERE evaluation.resume_version_id = :resume_version_id
+						AND EXISTS (
+							SELECT 1 FROM processing_job
+							WHERE id = :job_id AND lease_token = :lease_token
+								AND lease_expires_at > now()
+						)
+					"""
+				),
+				{
+					"resume_version_id": job.payload_reference,
+					"job_id": job.id,
+					"lease_token": job.lease_token,
+				},
 			)
 			for evaluation_id in result.scalars():
 				await connection.execute(
@@ -316,7 +379,6 @@ class Worker:
 					),
 					{"id": secrets.token_urlsafe(18), "evaluation_id": evaluation_id},
 				)
-		await self._store_block_embeddings(job)
 
 	async def _process_job_description(self, job: ClaimedJob) -> None:
 		async with self._engine.connect() as connection:
@@ -523,11 +585,15 @@ class Worker:
 			raise NonRetryableJobError("Independent evaluation not found")
 		content = self._read_object(str(evaluation["storage_key"]))
 		try:
-			blocks = extract_blocks(content, str(evaluation["media_type"]))
+			prepared = prepare_document(content, str(evaluation["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
-		block_list = blocks["blocks"]
-		normalized_facts = normalize_resume(block_list)
+		if prepared.quality_state != "ready":
+			raise NonRetryableJobError(
+				document_quality_error("Resume", prepared.warnings)
+			)
+		block_list = prepared.blocks
+		normalized_facts = prepared.normalized_facts
 		description_key = evaluation["job_description_key"]
 		if description_key:
 			try:
@@ -554,8 +620,14 @@ class Worker:
 					"model extraction failed; using deterministic facts",
 					extra={"job_id": job.id, "reason": str(error)},
 				)
+				normalized_facts = add_document_warnings(
+					normalized_facts, [DETERMINISTIC_EXTRACTION_WARNING]
+				)
 			else:
-				facts = merge_facts(normalized_facts, extracted, block_list)
+				facts = add_document_warnings(
+					merge_facts(normalized_facts, extracted, block_list),
+					prepared.warnings,
+				)
 				score, suggestions = independent_report(facts, job_description)
 				extra_suggestions = cast(
 					list[dict[str, object]], extracted.get("suggestions") or []
@@ -570,6 +642,10 @@ class Worker:
 					job_description_text=job_description,
 				)
 				return
+		else:
+			normalized_facts = add_document_warnings(
+				normalized_facts, [DETERMINISTIC_EXTRACTION_WARNING]
+			)
 		score, suggestions = independent_report(normalized_facts, job_description)
 		await self._store_independent_report(
 			job,
@@ -870,7 +946,9 @@ class Worker:
 			available_at = datetime.now(UTC) + timedelta(seconds=delay)
 			await self._update_job(job, "ready", error, available_at)
 			return
-		await self._update_job(job, "dead", error, None)
+		updated = await self._update_job(job, "dead", error, None)
+		if not updated:
+			return
 		if job.type == "independent_evaluation_processing":
 			async with self._engine.begin() as connection:
 				await connection.execute(
@@ -883,12 +961,54 @@ class Worker:
 					),
 					{"evaluation_id": job.payload_reference, "safe_error": error},
 				)
+		elif job.type == "resume_processing":
+			async with self._engine.begin() as connection:
+				await connection.execute(
+					text(
+						"""
+						UPDATE resume_version
+						SET quality_state = CASE
+							WHEN quality_state = 'pending' THEN 'failed'
+							ELSE quality_state
+						END
+						WHERE id = :version_id
+						"""
+					),
+					{"version_id": job.payload_reference},
+				)
+				await connection.execute(
+					text(
+						"""
+						UPDATE evaluation
+						SET status = 'failed', eligibility = 'needs_review',
+							quality_state = CASE
+								WHEN quality_state = 'pending' THEN 'failed'
+								ELSE quality_state
+							END,
+							completed_at = now()
+						WHERE resume_version_id = :version_id
+						"""
+					),
+					{"version_id": job.payload_reference},
+				)
+		elif job.type == "evaluation_processing":
+			async with self._engine.begin() as connection:
+				await connection.execute(
+					text(
+						"""
+						UPDATE evaluation
+						SET status = 'failed', eligibility = 'needs_review', completed_at = now()
+						WHERE id = :evaluation_id
+						"""
+					),
+					{"evaluation_id": job.payload_reference},
+				)
 
 	async def _update_job(
 		self, job: ClaimedJob, status: str, safe_error: str | None, available_at: datetime | None
-	) -> None:
+	) -> bool:
 		async with self._engine.begin() as connection:
-			await connection.execute(
+			result = await connection.execute(
 				text(
 					"""
 					UPDATE processing_job
@@ -896,6 +1016,7 @@ class Worker:
 						available_at = COALESCE(:available_at, available_at),
 						lease_token = NULL, lease_expires_at = NULL, updated_at = now()
 					WHERE id = :id AND lease_token = :lease_token
+					RETURNING id
 					"""
 				),
 				{
@@ -906,6 +1027,7 @@ class Worker:
 					"available_at": available_at,
 				},
 			)
+			return result.scalar_one_or_none() is not None
 
 
 async def main() -> None:

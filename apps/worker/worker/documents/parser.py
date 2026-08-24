@@ -12,6 +12,11 @@ MAX_PAGES = 100
 MAX_EXTRACTED_CHARACTERS = 250_000
 MIN_RELIABLE_NON_WHITESPACE_CHARACTERS = 40
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+INSTRUCTION_LIKE_TEXT = re.compile(
+	r"\b(?:ignore (?:all |any )?(?:previous|prior) instructions|"
+	r"reveal (?:the )?system prompt|give this resume (?:a )?perfect score)\b",
+	re.IGNORECASE,
+)
 
 
 class DocumentParseError(ValueError):
@@ -203,6 +208,8 @@ def parsed_document(
 		warnings.append("Extracted text contains repeated blocks that may be duplicated")
 	if joined_text.count("\ufffd") / max(len(joined_text), 1) >= 0.01:
 		warnings.append("Extracted text contains many unreadable characters")
+	if INSTRUCTION_LIKE_TEXT.search(joined_text):
+		warnings.append("Document contains instruction-like text that requires review")
 	return {
 		"blocks": blocks,
 		"metadata": {
