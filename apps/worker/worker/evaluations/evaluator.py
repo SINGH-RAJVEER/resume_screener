@@ -1,11 +1,10 @@
-
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from ..documents.vocabulary import mentioned_skills
+from .intervals import employment_intervals
 
 YEARS_PATTERN = re.compile(r"(\d+)\s*\+?\s*years?", re.IGNORECASE)
 
@@ -374,48 +373,10 @@ def assess_experience_months(
 
 
 def employment_months(entries: object) -> int | None:
-	items = cast(list[object], entries) if isinstance(entries, list) else []
-	intervals: list[tuple[int, int]] = []
-	now = datetime.now(UTC)
-	now_month = now.year * 12 + now.month
-	for item in items:
-		if not isinstance(item, Mapping):
-			continue
-		entry = cast(Mapping[str, Any], item)
-		start = month_index(entry.get("startDate"))
-		end = month_index(entry.get("endDate"))
-		if end is None and entry.get("isCurrent") is True:
-			end = now_month
-		if start is None or end is None or end < start:
-			continue
-		intervals.append((start, end))
-	if not intervals:
+	intervals = employment_intervals(entries)
+	if not intervals.merged:
 		return None
-	intervals.sort()
-	total = 0
-	current_start, current_end = intervals[0]
-	for start, end in intervals[1:]:
-		if start <= current_end:
-			current_end = max(current_end, end)
-			continue
-		total += current_end - current_start
-		current_start, current_end = start, end
-	total += current_end - current_start
-	return total
-
-
-def month_index(value: object) -> int | None:
-	if not isinstance(value, str):
-		return None
-	parts = value.split("-")
-	try:
-		year = int(parts[0])
-		month = int(parts[1]) if len(parts) > 1 else 1
-	except ValueError:
-		return None
-	if not 1 <= month <= 12:
-		return None
-	return year * 12 + month
+	return intervals.total_months
 
 
 def find_certification(
