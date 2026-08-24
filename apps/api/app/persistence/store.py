@@ -13,7 +13,15 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from .models import Account, User
+from .join_policy import email_domain
+from .models import (
+    Account,
+    Organization,
+    OrganizationAllowedEmail,
+    OrganizationEmailDomain,
+    OrganizationMember,
+    User,
+)
 
 
 class NotFoundError(Exception):
@@ -36,6 +44,13 @@ class UserRecord:
     image: str | None = None
 
 
+@dataclass(frozen=True)
+class JoinedOrganization:
+    id: str
+    name: str
+    role: str
+
+
 class Store(Protocol):
     async def register(
         self, name: str, email: str, password_hash: str, account_type: str = "candidate"
@@ -44,6 +59,8 @@ class Store(Protocol):
     async def credentials(self, email: str) -> tuple[UserRecord, str]: ...
 
     async def user(self, user_id: str) -> UserRecord: ...
+
+    async def apply_join_policies(self, user_id: str, email: str) -> list[JoinedOrganization]: ...
 
 
 def database_url_for_asyncpg(url: str) -> str:
@@ -117,6 +134,58 @@ class SQLAlchemyStore:
         if user is None:
             raise NotFoundError
         return _to_record(user)
+
+    async def apply_join_policies(self, user_id: str, email: str) -> list[JoinedOrganization]:
+        domain = email_domain(email)
+        async with self._sessions.begin() as session:
+            domain_org_ids = select(OrganizationEmailDomain.organization_id).where(
+                OrganizationEmailDomain.domain == domain
+            )
+            email_org_ids = select(OrganizationAllowedEmail.organization_id).where(
+                OrganizationAllowedEmail.email == email
+            )
+            organizations = (
+                (
+                    await session.execute(
+                        select(Organization).where(
+                            Organization.id.in_(domain_org_ids)
+                            | Organization.id.in_(email_org_ids)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            joined_ids = set(
+                (
+                    await session.execute(
+                        select(OrganizationMember.organization_id).where(
+                            OrganizationMember.user_id == user_id
+                        )
+                    )
+                )
+                .scalars()
+            )
+            joined: list[JoinedOrganization] = []
+            for organization in organizations:
+                if organization.id in joined_ids:
+                    continue
+                session.add(
+                    OrganizationMember(
+                        id=_new_id(),
+                        organization_id=organization.id,
+                        user_id=user_id,
+                        role=organization.default_member_role,
+                    )
+                )
+                joined.append(
+                    JoinedOrganization(
+                        id=organization.id,
+                        name=organization.name,
+                        role=organization.default_member_role,
+                    )
+                )
+            return joined
 
 
 def _to_record(user: User) -> UserRecord:

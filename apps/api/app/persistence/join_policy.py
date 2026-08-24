@@ -20,7 +20,9 @@ PUBLIC_EMAIL_DOMAINS = frozenset(
     }
 )
 
-_DOMAIN_PATTERN = re.compile(r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
+_DOMAIN_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
+)
 
 
 class InvalidDomainError(ValueError):

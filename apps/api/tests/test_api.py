@@ -10,7 +10,14 @@ from httpx import ASGITransport, AsyncClient
 from app.auth import AuthService
 from app.core.config import Settings
 from app.main import create_app
-from app.persistence.store import EmailAlreadyUsedError, NotFoundError, Store, UserRecord
+from app.persistence.join_policy import email_domain
+from app.persistence.store import (
+    EmailAlreadyUsedError,
+    JoinedOrganization,
+    NotFoundError,
+    Store,
+    UserRecord,
+)
 
 SECRET = "test-secret-that-is-at-least-32-characters"
 SETTINGS = Settings(
@@ -31,6 +38,9 @@ class FakeStore:
         self.register_error: Exception | None = None
         self.credentials_error: Exception | None = None
         self.user_error: Exception | None = None
+        self.policy_domains: dict[str, str] = {}
+        self.policy_emails: dict[str, str] = {}
+        self.joined_organizations: list[JoinedOrganization] = []
 
     async def register(
         self, name: str, email: str, password_hash: str, account_type: str = "candidate"
@@ -54,6 +64,25 @@ class FakeStore:
         if self.user_record is None or self.user_record.id != user_id:
             raise NotFoundError
         return self.user_record
+
+    async def apply_join_policies(self, user_id: str, email: str) -> list[JoinedOrganization]:
+        domain = email_domain(email)
+        matches = [
+            organization_id
+            for claimed, organization_id in self.policy_domains.items()
+            if claimed == domain
+        ] + [
+            organization_id
+            for allowed, organization_id in self.policy_emails.items()
+            if allowed == email
+        ]
+        joined: list[JoinedOrganization] = []
+        for organization_id in dict.fromkeys(matches):
+            member = JoinedOrganization(organization_id, f"Org {organization_id}", "viewer")
+            if member not in self.joined_organizations:
+                self.joined_organizations.append(member)
+                joined.append(member)
+        return joined
 
 
 def make_user(
@@ -123,6 +152,55 @@ async def test_employer_signup_creates_an_employer_account() -> None:
 
     assert response.status_code == 201
     assert response.json()["user"]["accountType"] == "employer"
+
+
+async def test_employer_signup_auto_joins_a_claimed_domain() -> None:
+    store = FakeStore()
+    store.policy_domains["company.com"] = "org-1"
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/employer/auth/sign-up/email",
+            json={**SIGN_UP_BODY, "email": "ada@Company.com"},
+        )
+
+    assert response.status_code == 201
+    assert store.joined_organizations == [JoinedOrganization("org-1", "Org org-1", "viewer")]
+
+
+async def test_employer_signup_auto_joins_an_allowlisted_email() -> None:
+    store = FakeStore()
+    store.policy_emails["ada@personal.org"] = "org-2"
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/employer/auth/sign-up/email",
+            json={**SIGN_UP_BODY, "email": "ada@personal.org"},
+        )
+
+    assert response.status_code == 201
+    assert store.joined_organizations == [JoinedOrganization("org-2", "Org org-2", "viewer")]
+
+
+async def test_employer_signup_without_a_policy_match_stays_organization_less() -> None:
+    store = FakeStore()
+    store.policy_domains["other.com"] = "org-1"
+    async with api_client(store) as client:
+        response = await client.post(
+            "/api/employer/auth/sign-up/email",
+            json=SIGN_UP_BODY,
+        )
+
+    assert response.status_code == 201
+    assert store.joined_organizations == []
+
+
+async def test_candidate_signup_never_applies_join_policies() -> None:
+    store = FakeStore()
+    store.policy_domains["example.com"] = "org-1"
+    async with api_client(store) as client:
+        response = await client.post("/api/auth/sign-up/email", json=SIGN_UP_BODY)
+
+    assert response.status_code == 201
+    assert store.joined_organizations == []
 
 
 async def test_candidate_signin_rejects_an_employer_account() -> None:

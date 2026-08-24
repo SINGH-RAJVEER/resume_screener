@@ -14,7 +14,13 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import AuthResult, AuthService, CredentialValidationError, InvalidCredentialsError
+from ..auth import (
+    AuthResult,
+    AuthService,
+    CredentialValidationError,
+    InvalidCredentialsError,
+    validate_email,
+)
 from ..core.http import APIError
 from ..documents.ingestion import (
     DocumentValidationError,
@@ -23,6 +29,7 @@ from ..documents.ingestion import (
     validate_resume,
 )
 from ..documents.storage import LocalObjectStorage
+from ..persistence.join_policy import InvalidDomainError, normalize_domain
 from ..persistence.models import (
     CandidateRecord,
     Evaluation,
@@ -32,6 +39,8 @@ from ..persistence.models import (
     JobRequirement,
     JobVersion,
     Organization,
+    OrganizationAllowedEmail,
+    OrganizationEmailDomain,
     OrganizationMember,
     ProcessingJob,
     RequirementAssessment,
@@ -91,6 +100,18 @@ class OrganizationRequest(RequestModel):
 class OrganizationMemberRequest(RequestModel):
     email: str
     role: str
+
+
+class JoinPolicyRequest(RequestModel):
+    default_role: str
+
+
+class JoinPolicyDomainRequest(RequestModel):
+    domain: str
+
+
+class JoinPolicyEmailRequest(RequestModel):
+    email: str
 
 
 class JobRequest(RequestModel):
@@ -156,6 +177,7 @@ async def sign_up_employer(input_data: SignUpRequest, request: Request) -> AuthR
 async def register_account(
     input_data: SignUpRequest, request: Request, account_type: str
 ) -> AuthResponse:
+    store: Store = request.app.state.store
     try:
         result = await auth_service(request).register(
             input_data.name,
@@ -167,6 +189,8 @@ async def register_account(
         raise APIError(400, "INVALID_CREDENTIALS", str(error)) from error
     except EmailAlreadyUsedError:
         raise APIError(409, "EMAIL_ALREADY_EXISTS", "Email is already registered") from None
+    if account_type == "employer":
+        await store.apply_join_policies(result.user.id, result.user.email)
     return auth_response(result)
 
 
@@ -351,6 +375,162 @@ async def remove_organization_member(
         if member.role == "owner":
             raise APIError(409, "OWNER_REQUIRED", "Organization owner cannot be removed")
         await session.delete(member)
+
+
+@router.get("/api/organizations/{organization_id}/join-policy")
+async def get_join_policy(organization_id: str, request: Request) -> dict[str, object]:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        await require_owner(session, organization_id, user.id)
+        organization = await session.get(Organization, organization_id)
+        if organization is None:
+            raise APIError(404, "NOT_FOUND", "Organization not found")
+        domains = (
+            (
+                await session.execute(
+                    select(OrganizationEmailDomain.domain).where(
+                        OrganizationEmailDomain.organization_id == organization_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        emails = (
+            (
+                await session.execute(
+                    select(OrganizationAllowedEmail.email).where(
+                        OrganizationAllowedEmail.organization_id == organization_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return {
+        "defaultRole": organization.default_member_role,
+        "domains": sorted(domains),
+        "emails": sorted(emails),
+    }
+
+
+@router.put("/api/organizations/{organization_id}/join-policy")
+async def update_join_policy(
+    organization_id: str, input_data: JoinPolicyRequest, request: Request
+) -> dict[str, str]:
+    if input_data.default_role not in {"recruiter", "viewer"}:
+        raise APIError(400, "INVALID_REQUEST", "Default role must be recruiter or viewer")
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        organization = await session.get(Organization, organization_id)
+        if organization is None:
+            raise APIError(404, "NOT_FOUND", "Organization not found")
+        organization.default_member_role = input_data.default_role
+    return {"defaultRole": organization.default_member_role}
+
+
+@router.post("/api/organizations/{organization_id}/join-policy/domains", status_code=201)
+async def add_join_policy_domain(
+    organization_id: str, input_data: JoinPolicyDomainRequest, request: Request
+) -> dict[str, str]:
+    try:
+        domain = normalize_domain(input_data.domain)
+    except InvalidDomainError as error:
+        raise APIError(400, "INVALID_REQUEST", str(error)) from error
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        existing = (
+            await session.execute(
+                select(OrganizationEmailDomain).where(OrganizationEmailDomain.domain == domain)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            message = (
+                "Domain is already claimed"
+                if existing.organization_id != organization_id
+                else "Domain is already in the join policy"
+            )
+            raise APIError(409, "RULE_EXISTS", message)
+        rule = OrganizationEmailDomain(id=new_id(), organization_id=organization_id, domain=domain)
+        session.add(rule)
+    return {"domain": rule.domain}
+
+
+@router.delete(
+    "/api/organizations/{organization_id}/join-policy/domains/{domain}", status_code=204
+)
+async def remove_join_policy_domain(
+    organization_id: str, domain: str, request: Request
+) -> None:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        rule = (
+            await session.execute(
+                select(OrganizationEmailDomain).where(
+                    OrganizationEmailDomain.organization_id == organization_id,
+                    OrganizationEmailDomain.domain == normalize_domain(domain),
+                )
+            )
+        ).scalar_one_or_none()
+        if rule is None:
+            raise APIError(404, "NOT_FOUND", "Join policy domain not found")
+        await session.delete(rule)
+
+
+@router.post("/api/organizations/{organization_id}/join-policy/emails", status_code=201)
+async def add_join_policy_email(
+    organization_id: str, input_data: JoinPolicyEmailRequest, request: Request
+) -> dict[str, str]:
+    try:
+        validate_email(input_data.email.strip())
+    except CredentialValidationError as error:
+        raise APIError(400, "INVALID_REQUEST", str(error)) from error
+    email = input_data.email.strip().lower()
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        existing = (
+            await session.execute(
+                select(OrganizationAllowedEmail).where(
+                    OrganizationAllowedEmail.organization_id == organization_id,
+                    OrganizationAllowedEmail.email == email,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise APIError(409, "RULE_EXISTS", "Email is already in the join policy")
+        rule = OrganizationAllowedEmail(id=new_id(), organization_id=organization_id, email=email)
+        session.add(rule)
+    return {"email": rule.email}
+
+
+@router.delete("/api/organizations/{organization_id}/join-policy/emails/{email}", status_code=204)
+async def remove_join_policy_email(
+    organization_id: str, email: str, request: Request
+) -> None:
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        await require_owner(session, organization_id, user.id)
+        rule = (
+            await session.execute(
+                select(OrganizationAllowedEmail).where(
+                    OrganizationAllowedEmail.organization_id == organization_id,
+                    OrganizationAllowedEmail.email == email.strip().lower(),
+                )
+            )
+        ).scalar_one_or_none()
+        if rule is None:
+            raise APIError(404, "NOT_FOUND", "Join policy email not found")
+        await session.delete(rule)
 
 
 @router.get("/api/organizations/{organization_id}/jobs")

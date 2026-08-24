@@ -28,18 +28,24 @@ class AuthResult:
     expires_at: datetime
 
 
-def validate_credentials(name: str, email: str, password: str) -> None:
-    if not name or len(name.encode()) > 100:
-        raise CredentialValidationError("Name must be between 1 and 100 characters")
+def validate_email(email: str) -> None:
     parsed_name, parsed_email = parseaddr(email)
+    _, _, domain = parsed_email.rpartition("@")
     if (
         not parsed_email
         or parsed_name
         or parsed_email.casefold() != email.casefold()
+        or not domain or "." not in domain
         or len(email.encode()) > 254
         or re.search(r"\s", email)
     ):
         raise CredentialValidationError("Enter a valid email address")
+
+
+def validate_credentials(name: str, email: str, password: str) -> None:
+    if not name or len(name.encode()) > 100:
+        raise CredentialValidationError("Name must be between 1 and 100 characters")
+    validate_email(email)
     password_length = len(password.encode())
     if password_length < 8 or password_length > 72:
         raise CredentialValidationError("Password must be between 8 and 72 characters")
