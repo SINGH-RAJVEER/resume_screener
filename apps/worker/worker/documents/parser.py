@@ -1,4 +1,3 @@
-
 from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
@@ -49,10 +48,14 @@ def extract_docx_text(content: bytes) -> str:
 	except ElementTree.ParseError as error:
 		raise DocumentParseError("Resume DOCX could not be parsed") from error
 	paragraphs: list[str] = []
-	for paragraph in root.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"):
+	for paragraph in root.findall(
+		".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+	):
 		text = "".join(
 			str(node.text or "")
-			for node in paragraph.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t")
+			for node in paragraph.iter(
+				"{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
+			)
 		)
 		if text.strip():
 			paragraphs.append(text)

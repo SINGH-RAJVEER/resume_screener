@@ -16,6 +16,12 @@ from ..versions import (
 	RESUME_FACTS_SCHEMA_VERSION,
 )
 
+__all__ = [
+	"EXTRACTION_PROMPT_VERSION",
+	"REQUIREMENT_ASSESSMENT_SCHEMA_VERSION",
+	"RESUME_FACTS_SCHEMA_VERSION",
+]
+
 DATE_PATTERN = r"^\d{4}(-\d{2})?$"
 
 
@@ -112,14 +118,11 @@ def strict_schema(model: type[BaseModel]) -> dict[str, object]:
 def _tighten(node: object) -> object:
 	if isinstance(node, dict):
 		tightened_map: dict[str, object] = {
-			key: _tighten(value)
-			for key, value in cast(dict[str, object], node).items()
+			key: _tighten(value) for key, value in cast(dict[str, object], node).items()
 		}
 		properties = tightened_map.get("properties")
 		if isinstance(properties, dict):
-			tightened_map["required"] = list(
-				cast(dict[str, object], properties).keys()
-			)
+			tightened_map["required"] = list(cast(dict[str, object], properties).keys())
 			tightened_map["additionalProperties"] = False
 		return tightened_map
 	if isinstance(node, list):

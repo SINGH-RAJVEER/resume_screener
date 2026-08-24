@@ -33,6 +33,7 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 	point_reservation = Base.metadata.tables["point_reservation"]
 	job_version = Base.metadata.tables["job_version"]
 	batch_evaluation = Base.metadata.tables["batch_evaluation"]
+	batch_submission = Base.metadata.tables["batch_evaluation_submission"]
 	evaluation = Base.metadata.tables["evaluation"]
 	review_decision = Base.metadata.tables["review_decision"]
 
@@ -72,12 +73,18 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 		"ck_evaluation_score",
 		"ck_evaluation_evidence_coverage",
 	}
-	assert constraint_names(evaluation, UniqueConstraint) >= {
-		"uq_evaluation_batch_submission"
+	assert constraint_names(evaluation, UniqueConstraint) >= {"uq_evaluation_batch_submission"}
+	assert foreign_key_targets(batch_submission) >= {
+		("organization_id", "batch_evaluation.organization_id"),
+		("organization_id", "resume_submission.organization_id"),
 	}
-	assert constraint_names(review_decision, CheckConstraint) >= {
-		"ck_review_decision_eligibility"
+	assert foreign_key_targets(evaluation) >= {
+		(
+			"batch_evaluation_id",
+			"batch_evaluation_submission.batch_evaluation_id",
+		)
 	}
+	assert constraint_names(review_decision, CheckConstraint) >= {"ck_review_decision_eligibility"}
 
 
 def test_persisted_artifacts_include_policy_versions() -> None:
@@ -91,22 +98,22 @@ def test_persisted_artifacts_include_policy_versions() -> None:
 		"parser_configuration_version",
 		"schema_version",
 		"extraction_prompt_version",
-	} <= set(resume_version.columns)
+	} <= set(resume_version.columns.keys())
 	assert {"schema_version", "prompt_version", "compiler_version"} <= set(
-		job_version.columns
+		job_version.columns.keys()
 	)
 	assert {
 		"scoring_policy_version",
 		"assessment_schema_version",
 		"assessment_prompt_version",
-	} <= set(evaluation.columns)
+	} <= set(evaluation.columns.keys())
 	assert {
 		"parser_version",
 		"parser_configuration_version",
 		"schema_version",
 		"extraction_prompt_version",
 		"scoring_policy_version",
-	} <= set(independent_evaluation.columns)
+	} <= set(independent_evaluation.columns.keys())
 
 
 def constraint_names(

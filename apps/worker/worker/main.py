@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import logging
@@ -39,6 +38,17 @@ from .telemetry import (
 	shutdown_telemetry,
 	tracer,
 )
+from .versions import (
+	ASSESSMENT_PROMPT_VERSION,
+	EXTRACTION_PROMPT_VERSION,
+	JOB_REQUIREMENTS_COMPILER_VERSION,
+	JOB_REQUIREMENTS_PROMPT_VERSION,
+	LOCAL_PARSER_VERSION,
+	PARSER_CONFIGURATION_VERSION,
+	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+	RESUME_FACTS_SCHEMA_VERSION,
+	SCORING_POLICY_VERSION,
+)
 
 logger = logging.getLogger("skillsignal.worker")
 
@@ -55,6 +65,17 @@ class ClaimedJob:
 	lease_token: str
 	attempt_count: int
 	maximum_attempts: int
+
+
+def extract_document_text(content: bytes, media_type: str) -> str:
+	blocks = extract_blocks(content, media_type)["blocks"]
+	texts: list[str] = []
+	for raw_block in cast(list[object], blocks):
+		if not isinstance(raw_block, Mapping):
+			continue
+		block = cast(Mapping[str, object], raw_block)
+		texts.append(str(block.get("text", "")).strip())
+	return "\n\n".join(text for text in texts if text)
 
 
 class Worker:
@@ -185,6 +206,7 @@ class Worker:
 			raise NonRetryableJobError(str(error)) from error
 		block_list = blocks["blocks"]
 		normalized_facts = normalize_resume(block_list)
+		extracted_facts: Mapping[str, object] | None = None
 		if self._openrouter is not None:
 			try:
 				extracted = await extract_resume_facts(
@@ -204,9 +226,13 @@ class Worker:
 					extra={"job_id": job.id, "reason": str(error)},
 				)
 			else:
+				extracted_facts = extracted
 				normalized_facts = merge_facts(normalized_facts, extracted, block_list)
 		await self._store_parsed_resume(
-			job, blocks=blocks, normalized_facts=normalized_facts
+			job,
+			blocks=blocks,
+			structured_facts=extracted_facts,
+			normalized_facts=normalized_facts,
 		)
 
 	async def _store_parsed_resume(
@@ -214,6 +240,7 @@ class Worker:
 		job: ClaimedJob,
 		*,
 		blocks: Mapping[str, object],
+		structured_facts: Mapping[str, object] | None,
 		normalized_facts: Mapping[str, object],
 	) -> None:
 		async with self._engine.begin() as connection:
@@ -222,9 +249,13 @@ class Worker:
 					"""
 					UPDATE resume_version
 					SET extraction_blocks = CAST(:blocks AS jsonb),
+						structured_facts = CAST(:structured_facts AS jsonb),
 						normalized_facts = CAST(:normalized_facts AS jsonb),
 						quality_state = 'ready',
-						parser_version = 'local-1'
+						parser_version = :parser_version,
+						parser_configuration_version = :parser_configuration_version,
+						schema_version = :schema_version,
+						extraction_prompt_version = :extraction_prompt_version
 					WHERE id = :version_id
 						AND EXISTS (
 							SELECT 1 FROM processing_job
@@ -235,7 +266,14 @@ class Worker:
 				),
 				{
 					"blocks": json.dumps(blocks),
+					"structured_facts": json.dumps(dict(structured_facts or {})),
 					"normalized_facts": json.dumps(normalized_facts),
+					"parser_version": LOCAL_PARSER_VERSION,
+					"parser_configuration_version": PARSER_CONFIGURATION_VERSION,
+					"schema_version": RESUME_FACTS_SCHEMA_VERSION,
+					"extraction_prompt_version": (
+						EXTRACTION_PROMPT_VERSION if structured_facts is not None else None
+					),
 					"version_id": job.payload_reference,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
@@ -290,17 +328,27 @@ class Worker:
 			result = await connection.execute(
 				text(
 					"""
-					SELECT source_text
+					SELECT source_text, source_storage_key, source_media_type
 					FROM job_version
 					WHERE id = :version_id
 					"""
 				),
 				{"version_id": job.payload_reference},
 			)
-			source_text = result.scalar_one_or_none()
-		if source_text is None:
+			version_row = result.mappings().one_or_none()
+		if version_row is None:
 			raise NonRetryableJobError("Job version not found")
-		source = str(source_text)
+		source_storage_key = version_row["source_storage_key"]
+		if source_storage_key:
+			content = self._read_object(str(source_storage_key))
+			try:
+				source = extract_document_text(content, str(version_row["source_media_type"]))
+			except DocumentParseError as error:
+				raise NonRetryableJobError(str(error)) from error
+		elif version_row["source_text"] is not None:
+			source = str(version_row["source_text"])
+		else:
+			raise NonRetryableJobError("Job description is unavailable")
 		if self._openrouter is None:
 			artifact = compile_job_description(
 				source,
@@ -337,8 +385,11 @@ class Worker:
 					"""
 					UPDATE job_version
 					SET draft_requirements = CAST(:artifact AS jsonb),
+						source_text = :source_text,
 						normalized_text = :normalized_text,
-						schema_version = :schema_version
+						schema_version = :schema_version,
+						prompt_version = :prompt_version,
+						compiler_version = :compiler_version
 					WHERE id = :version_id
 						AND EXISTS (
 							SELECT 1 FROM processing_job
@@ -349,8 +400,11 @@ class Worker:
 				),
 				{
 					"artifact": json.dumps(artifact),
+					"source_text": source,
 					"normalized_text": source.strip(),
 					"schema_version": str(artifact["schemaVersion"]),
+					"prompt_version": JOB_REQUIREMENTS_PROMPT_VERSION,
+					"compiler_version": JOB_REQUIREMENTS_COMPILER_VERSION,
 					"version_id": job.payload_reference,
 					"job_id": job.id,
 					"lease_token": job.lease_token,
@@ -394,8 +448,7 @@ class Worker:
 				{"model": model, "hashes": unique_hashes},
 			)
 			vectors_by_hash = {
-				str(row["text_hash"]): list(row["vector"])
-				for row in cached.mappings()
+				str(row["text_hash"]): list(row["vector"]) for row in cached.mappings()
 			}
 		missing_texts: dict[str, str] = {}
 		for block_id, block_hash in hashes_by_block.items():
@@ -464,7 +517,8 @@ class Worker:
 					UPDATE independent_evaluation
 					SET status = 'processing', safe_error = NULL
 					WHERE id = :evaluation_id
-					RETURNING storage_key, media_type, original_name, job_description
+					RETURNING storage_key, media_type, original_name, job_description,
+						job_description_key, job_description_media_type
 					"""
 				),
 				{"evaluation_id": job.payload_reference},
@@ -479,9 +533,19 @@ class Worker:
 			raise NonRetryableJobError(str(error)) from error
 		block_list = blocks["blocks"]
 		normalized_facts = normalize_resume(block_list)
-		job_description = (
-			str(evaluation["job_description"]) if evaluation["job_description"] else None
-		)
+		description_key = evaluation["job_description_key"]
+		if description_key:
+			try:
+				job_description = extract_document_text(
+					self._read_object(str(description_key)),
+					str(evaluation["job_description_media_type"]),
+				)
+			except DocumentParseError as error:
+				raise NonRetryableJobError(str(error)) from error
+		else:
+			job_description = (
+				str(evaluation["job_description"]) if evaluation["job_description"] else None
+			)
 		if self._openrouter is not None:
 			try:
 				extracted = await extract_resume_facts(
@@ -512,6 +576,7 @@ class Worker:
 					facts=facts,
 					score=score,
 					suggestions=merge_suggestions(suggestions, extra_suggestions),
+					model_extraction_used=True,
 				)
 				return
 		score, suggestions = independent_report(normalized_facts, job_description)
@@ -521,6 +586,7 @@ class Worker:
 			facts=normalized_facts,
 			score=score,
 			suggestions=suggestions,
+			model_extraction_used=False,
 		)
 
 	async def _store_independent_report(
@@ -531,6 +597,7 @@ class Worker:
 		facts: Mapping[str, object],
 		score: int,
 		suggestions: list[dict[str, object]],
+		model_extraction_used: bool,
 	) -> None:
 		improved_key = f"independent-resumes/improved/{evaluation_id}.docx"
 		try:
@@ -550,6 +617,11 @@ class Worker:
 						normalized_facts = CAST(:normalized_facts AS jsonb),
 						improved_resume_key = :improved_key,
 						improved_resume_unlocked_at = now(),
+						parser_version = :parser_version,
+						parser_configuration_version = :parser_configuration_version,
+						schema_version = :schema_version,
+						extraction_prompt_version = :extraction_prompt_version,
+						scoring_policy_version = :scoring_policy_version,
 						safe_error = NULL, completed_at = now()
 					WHERE id = :evaluation_id
 						AND EXISTS (
@@ -567,6 +639,13 @@ class Worker:
 					"suggestions": json.dumps(suggestions),
 					"normalized_facts": json.dumps(dict(facts)),
 					"improved_key": improved_key,
+					"parser_version": LOCAL_PARSER_VERSION,
+					"parser_configuration_version": PARSER_CONFIGURATION_VERSION,
+					"schema_version": RESUME_FACTS_SCHEMA_VERSION,
+					"extraction_prompt_version": (
+						EXTRACTION_PROMPT_VERSION if model_extraction_used else None
+					),
+					"scoring_policy_version": SCORING_POLICY_VERSION,
 				},
 			)
 
@@ -590,6 +669,29 @@ class Worker:
 
 	async def _prepare_evaluation(self, job: ClaimedJob) -> None:
 		async with self._engine.begin() as connection:
+			await connection.execute(
+				text(
+					"""
+					UPDATE batch_evaluation AS batch
+					SET model_configuration = CAST(:model_configuration AS jsonb)
+					FROM evaluation
+					WHERE evaluation.id = :evaluation_id
+						AND batch.id = evaluation.batch_evaluation_id
+						AND batch.model_configuration = '{}'::jsonb
+					"""
+				),
+				{
+					"evaluation_id": job.payload_reference,
+					"model_configuration": json.dumps(
+						{
+							"extractionModel": self._settings.openrouter.extraction_model,
+							"assessmentModel": self._settings.openrouter.assessment_model,
+							"embeddingModel": self._settings.openrouter.embedding_model,
+							"llmEnabled": self._settings.llm_enabled,
+						}
+					),
+				},
+			)
 			result = await connection.execute(
 				text(
 					"""
@@ -622,6 +724,7 @@ class Worker:
 			requirement_list = [dict(requirement) for requirement in requirements.mappings()]
 			outcome = evaluate(dict(evaluation["normalized_facts"] or {}), requirement_list)
 			assessments: Sequence[Assessment] = outcome.assessments
+			model_assessment_used = False
 			assessable_requirements = [
 				requirement
 				for requirement in requirement_list
@@ -648,6 +751,7 @@ class Worker:
 						extra={"job_id": job.id, "reason": str(error)},
 					)
 				else:
+					model_assessment_used = True
 					assessments = refine_assessments(
 						assessments, model_assessments, requirement_list
 					)
@@ -680,9 +784,7 @@ class Worker:
 						"confidence": assessment.confidence,
 						"reasoning": assessment.reasoning,
 						"evidence": json.dumps(assessment.evidence),
-						"semantic": json.dumps(
-							semantic_evidence.get(assessment.requirement_id)
-						),
+						"semantic": json.dumps(semantic_evidence.get(assessment.requirement_id)),
 					},
 				)
 			await connection.execute(
@@ -690,7 +792,11 @@ class Worker:
 					"""
 					UPDATE evaluation
 					SET status = 'complete', score = :score, evidence_coverage = :coverage,
-						eligibility = :eligibility, quality_state = 'ready', completed_at = now()
+						eligibility = :eligibility, quality_state = 'ready',
+						scoring_policy_version = :scoring_policy_version,
+						assessment_schema_version = :assessment_schema_version,
+						assessment_prompt_version = :assessment_prompt_version,
+						completed_at = now()
 					WHERE id = :evaluation_id
 						AND EXISTS (
 							SELECT 1 FROM processing_job
@@ -706,6 +812,13 @@ class Worker:
 					"score": outcome.score,
 					"coverage": outcome.evidence_coverage,
 					"eligibility": outcome.eligibility,
+					"scoring_policy_version": SCORING_POLICY_VERSION,
+					"assessment_schema_version": (
+						REQUIREMENT_ASSESSMENT_SCHEMA_VERSION if model_assessment_used else None
+					),
+					"assessment_prompt_version": (
+						ASSESSMENT_PROMPT_VERSION if model_assessment_used else None
+					),
 				},
 			)
 

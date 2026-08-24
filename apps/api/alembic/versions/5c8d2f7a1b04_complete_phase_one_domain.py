@@ -30,6 +30,11 @@ def upgrade() -> None:
 		sa.Column("compiler_version", sa.Text(), nullable=False, server_default="compiler-2"),
 	)
 	op.create_unique_constraint("uq_job_version_job", "job_version", ["job_id", "id"])
+	op.create_unique_constraint(
+		"uq_submission_organization_job",
+		"resume_submission",
+		["organization_id", "job_id", "id"],
+	)
 	op.create_table(
 		"batch_evaluation",
 		sa.Column("id", sa.Text(), primary_key=True),
@@ -71,10 +76,14 @@ def upgrade() -> None:
 			["job_version.job_id", "job_version.id"],
 			ondelete="RESTRICT",
 		),
+		sa.UniqueConstraint(
+			"organization_id",
+			"job_id",
+			"id",
+			name="uq_batch_evaluation_organization_job",
+		),
 	)
-	op.drop_constraint(
-		"uq_evaluation_submission_job_version", "evaluation", type_="unique"
-	)
+	op.drop_constraint("uq_evaluation_submission_job_version", "evaluation", type_="unique")
 	op.add_column(
 		"evaluation",
 		sa.Column(
@@ -94,15 +103,11 @@ def upgrade() -> None:
 	)
 	op.add_column(
 		"evaluation",
-		sa.Column(
-			"assessment_schema_version", sa.Text(), nullable=False, server_default="1"
-		),
+		sa.Column("assessment_schema_version", sa.Text()),
 	)
 	op.add_column(
 		"evaluation",
-		sa.Column(
-			"assessment_prompt_version", sa.Text(), nullable=False, server_default="1"
-		),
+		sa.Column("assessment_prompt_version", sa.Text()),
 	)
 	op.add_column("evaluation", sa.Column("rank", sa.Integer()))
 	op.create_check_constraint(
@@ -125,16 +130,16 @@ def upgrade() -> None:
 	)
 	op.create_table(
 		"batch_evaluation_submission",
+		sa.Column("organization_id", sa.Text(), nullable=False),
+		sa.Column("job_id", sa.Text(), nullable=False),
 		sa.Column(
 			"batch_evaluation_id",
 			sa.Text(),
-			sa.ForeignKey("batch_evaluation.id", ondelete="CASCADE"),
 			primary_key=True,
 		),
 		sa.Column(
 			"resume_submission_id",
 			sa.Text(),
-			sa.ForeignKey("resume_submission.id", ondelete="RESTRICT"),
 			primary_key=True,
 		),
 		sa.Column(
@@ -143,6 +148,28 @@ def upgrade() -> None:
 			nullable=False,
 			server_default=sa.func.now(),
 		),
+		sa.ForeignKeyConstraint(
+			["organization_id", "job_id", "batch_evaluation_id"],
+			["batch_evaluation.organization_id", "batch_evaluation.job_id", "batch_evaluation.id"],
+			ondelete="CASCADE",
+		),
+		sa.ForeignKeyConstraint(
+			["organization_id", "job_id", "resume_submission_id"],
+			[
+				"resume_submission.organization_id",
+				"resume_submission.job_id",
+				"resume_submission.id",
+			],
+			ondelete="RESTRICT",
+		),
+	)
+	op.create_foreign_key(
+		"fk_evaluation_batch_submission",
+		"evaluation",
+		"batch_evaluation_submission",
+		["batch_evaluation_id", "resume_submission_id"],
+		["batch_evaluation_id", "resume_submission_id"],
+		ondelete="CASCADE",
 	)
 	op.create_table(
 		"review_decision",
@@ -185,9 +212,7 @@ def upgrade() -> None:
 	op.add_column("independent_evaluation", sa.Column("schema_version", sa.Text()))
 	op.add_column(
 		"independent_evaluation",
-		sa.Column(
-			"extraction_prompt_version", sa.Text(), nullable=False, server_default="1"
-		),
+		sa.Column("extraction_prompt_version", sa.Text()),
 	)
 	op.add_column(
 		"independent_evaluation",
@@ -210,6 +235,7 @@ def downgrade() -> None:
 	):
 		op.drop_column("independent_evaluation", column)
 	op.drop_table("review_decision")
+	op.drop_constraint("fk_evaluation_batch_submission", "evaluation", type_="foreignkey")
 	op.drop_table("batch_evaluation_submission")
 	op.drop_constraint("uq_evaluation_batch_submission", "evaluation", type_="unique")
 	op.drop_constraint("ck_evaluation_evidence_coverage", "evaluation", type_="check")
@@ -229,6 +255,7 @@ def downgrade() -> None:
 		["resume_submission_id", "job_version_id"],
 	)
 	op.drop_table("batch_evaluation")
+	op.drop_constraint("uq_submission_organization_job", "resume_submission", type_="unique")
 	op.drop_constraint("uq_job_version_job", "job_version", type_="unique")
 	op.drop_column("job_version", "compiler_version")
 	op.drop_column("job_version", "prompt_version")

@@ -7,8 +7,10 @@ import bcrypt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.contracts import ErrorCode
 from app.auth import AuthService
 from app.core.config import Settings
+from app.core.http import APIError
 from app.main import create_app
 from app.persistence.join_policy import email_domain
 from app.persistence.store import (
@@ -116,6 +118,29 @@ async def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+async def test_openapi_documents_stable_error_and_command_contracts() -> None:
+    async with api_client(FakeStore()) as client:
+        response = await client.get("/openapi.json")
+
+    assert response.status_code == 200
+    document = response.json()
+    create_job = document["paths"]["/api/jobs"]["post"]
+    assert create_job["responses"]["202"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("JobAcceptedResponse")
+    assert create_job["responses"]["409"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("ErrorResponse")
+    assert set(document["components"]["schemas"]["ErrorCode"]["enum"]) == {
+        code.value for code in ErrorCode
+    }
+
+
+async def test_api_error_rejects_undocumented_codes() -> None:
+    with pytest.raises(ValueError):
+        APIError(400, "TYPO_ERROR", "bad")
 
 
 async def test_app_requires_complete_test_dependencies() -> None:

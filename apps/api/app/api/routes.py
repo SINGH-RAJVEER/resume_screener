@@ -26,21 +26,19 @@ from ..documents.ingestion import (
     DocumentValidationError,
     inspect_resume_zip,
     media_type_for_name,
-    validate_resume,
+    validate_document,
 )
 from ..documents.storage import LocalObjectStorage
 from ..domain.versions import (
-	ASSESSMENT_PROMPT_VERSION,
 	JOB_REQUIREMENTS_COMPILER_VERSION,
 	JOB_REQUIREMENTS_PROMPT_VERSION,
 	JOB_REQUIREMENTS_SCHEMA_VERSION,
-	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
 	SCORING_POLICY_VERSION,
 )
 from ..persistence.join_policy import InvalidDomainError, normalize_domain
 from ..persistence.models import (
-	BatchEvaluation,
-	BatchEvaluationSubmission,
+    BatchEvaluation,
+    BatchEvaluationSubmission,
     CandidateRecord,
     Evaluation,
     IndependentEvaluation,
@@ -60,6 +58,14 @@ from ..persistence.models import (
     User,
 )
 from ..persistence.store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
+from .contracts import (
+    ERROR_RESPONSES,
+    IndependentEvaluationAcceptedResponse,
+    JobAcceptedResponse,
+    ProcessingJobResponse,
+    ResumeBatchAcceptedResponse,
+    ResumeSubmissionAcceptedResponse,
+)
 
 
 class RequestModel(BaseModel):
@@ -124,12 +130,6 @@ class JoinPolicyEmailRequest(RequestModel):
     email: str
 
 
-class JobRequest(RequestModel):
-    organization_id: str
-    title: str
-    description: str
-
-
 class ApplicationWindowRequest(RequestModel):
     opens_at: datetime
     closes_at: datetime
@@ -166,7 +166,7 @@ class InvitationPasscodeRequest(RequestModel):
     passcode: str
 
 
-router = APIRouter()
+router = APIRouter(responses=ERROR_RESPONSES)
 
 
 @router.get("/health")
@@ -588,24 +588,49 @@ async def list_jobs(organization_id: str, request: Request) -> list[dict[str, ob
     ]
 
 
-@router.post("/api/jobs", status_code=202)
-async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]:
+@router.post("/api/jobs", status_code=202, response_model=JobAcceptedResponse)
+async def create_job(
+    request: Request,
+    organization_id: str = Form(),
+    title: str = Form(),
+    description: str = Form(""),
+    file: UploadFile | None = File(None),
+) -> JobAcceptedResponse:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
-    job = Job(
-        id=new_id(), organization_id=input_data.organization_id, title=input_data.title.strip()
-    )
+    file_content = await read_optional_upload(file)
+    if file_content is not None and description.strip():
+        raise APIError(
+            400, "INVALID_REQUEST", "Provide either a pasted description or a file, not both"
+        )
+    if file_content is not None:
+        assert file is not None
+        try:
+            validated = validate_document(file_content, file.content_type, file.filename)
+        except DocumentValidationError as error:
+            raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
+        storage_key: str | None = f"job-descriptions/{new_id()}{validated.extension}"
+        source_text: str | None = None
+        source_media_type = validated.media_type
+    else:
+        if not description.strip():
+            raise APIError(400, "INVALID_REQUEST", "A job description is required")
+        storage_key = None
+        source_text = description
+        source_media_type = "text/plain"
+    job = Job(id=new_id(), organization_id=organization_id, title=title.strip())
     version = JobVersion(
         id=new_id(),
         job_id=job.id,
         version=1,
-        source_text=input_data.description,
-        normalized_text=input_data.description.strip(),
-        source_media_type="text/plain",
+        source_text=source_text,
+        normalized_text=None if source_text is None else source_text.strip(),
+        source_media_type=source_media_type,
+        source_storage_key=storage_key,
         draft_requirements=None,
-		schema_version=JOB_REQUIREMENTS_SCHEMA_VERSION,
-		prompt_version=JOB_REQUIREMENTS_PROMPT_VERSION,
-		compiler_version=JOB_REQUIREMENTS_COMPILER_VERSION,
+        schema_version=JOB_REQUIREMENTS_SCHEMA_VERSION,
+        prompt_version=JOB_REQUIREMENTS_PROMPT_VERSION,
+        compiler_version=JOB_REQUIREMENTS_COMPILER_VERSION,
     )
     processing_job = ProcessingJob(
         id=new_id(),
@@ -616,16 +641,18 @@ async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]
         maximum_attempts=3,
     )
     async with store.sessions().begin() as session:
-        await require_write_membership(session, input_data.organization_id, user.id)
+        await require_write_membership(session, organization_id, user.id)
         session.add(job)
         await session.flush()
         session.add(version)
         session.add(processing_job)
-    return {
-        "id": job.id,
-        "versionId": version.id,
-        "processingJobId": processing_job.id,
-    }
+        if storage_key is not None and file_content is not None:
+            LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
+                storage_key, file_content
+            )
+    return JobAcceptedResponse(
+        id=job.id, version_id=version.id, processing_job_id=processing_job.id
+    )
 
 
 @router.get("/api/jobs/{job_id}")
@@ -748,8 +775,8 @@ async def confirm_requirements(
             source_media_type=previous_version.source_media_type,
             draft_requirements=previous_version.draft_requirements,
             schema_version=previous_version.schema_version,
-			prompt_version=previous_version.prompt_version,
-			compiler_version=previous_version.compiler_version,
+            prompt_version=previous_version.prompt_version,
+            compiler_version=previous_version.compiler_version,
             confirmed_at=datetime.now(UTC),
         )
         session.add(version)
@@ -897,7 +924,11 @@ async def redeem_invitation_passcode(
         return {"jobId": invitation.job_id, "invitationId": invitation.id}
 
 
-@router.post("/api/jobs/{job_id}/resumes", status_code=202)
+@router.post(
+    "/api/jobs/{job_id}/resumes",
+    status_code=202,
+    response_model=ResumeSubmissionAcceptedResponse,
+)
 async def upload_resume(
     job_id: str,
     request: Request,
@@ -908,7 +939,7 @@ async def upload_resume(
     store = require_sqlalchemy_store(request)
     content = await file.read()
     try:
-        validated = validate_resume(content, file.content_type, file.filename)
+        validated = validate_document(content, file.content_type, file.filename)
     except DocumentValidationError as error:
         raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
     async with store.sessions().begin() as session:
@@ -992,27 +1023,27 @@ async def upload_resume(
         )
         evaluation = Evaluation(
             id=new_id(),
-			batch_evaluation_id=batch_evaluation.id,
+            batch_evaluation_id=batch_evaluation.id,
             resume_submission_id=submission.id,
             job_version_id=job_version.id,
             resume_version_id=version.id,
-			scoring_policy_version=SCORING_POLICY_VERSION,
-			assessment_schema_version=REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
-			assessment_prompt_version=ASSESSMENT_PROMPT_VERSION,
+            scoring_policy_version=SCORING_POLICY_VERSION,
         )
         batch_submission = BatchEvaluationSubmission(
+			organization_id=job.organization_id,
+			job_id=job.id,
             batch_evaluation_id=batch_evaluation.id,
             resume_submission_id=submission.id,
         )
         await add_resume_chain(
-			session,
-			candidate,
-			document,
-			version,
-			submission,
-			processing,
-			evaluation,
-			batch_submission,
+            session,
+            candidate,
+            document,
+            version,
+            submission,
+            processing,
+            evaluation,
+            batch_submission,
         )
         if invitation is not None:
             # Set after the chain flush so the update cannot be emitted before
@@ -1025,11 +1056,15 @@ async def upload_resume(
         "processingJobId": processing.id,
         "submissionId": submission.id,
         "evaluationId": evaluation.id,
-		"batchEvaluationId": batch_evaluation.id,
+        "batchEvaluationId": batch_evaluation.id,
     }
 
 
-@router.post("/api/jobs/{job_id}/resume-batches", status_code=202)
+@router.post(
+    "/api/jobs/{job_id}/resume-batches",
+    status_code=202,
+    response_model=ResumeBatchAcceptedResponse,
+)
 async def upload_resume_batch(
     job_id: str, request: Request, archive: UploadFile = File()
 ) -> dict[str, object]:
@@ -1065,7 +1100,9 @@ async def upload_resume_batch(
         for entry in entries:
             if entry.content is None:
                 continue
-            validated = validate_resume(entry.content, media_type_for_name(entry.name), entry.name)
+            validated = validate_document(
+                entry.content, media_type_for_name(entry.name), entry.name
+            )
             candidate = CandidateRecord(id=new_id(), organization_id=job.organization_id)
             document = ResumeDocument(
                 id=new_id(),
@@ -1100,16 +1137,16 @@ async def upload_resume_batch(
             )
             evaluation = Evaluation(
                 id=new_id(),
-				batch_evaluation_id=batch_evaluation.id if batch_evaluation else None,
+                batch_evaluation_id=batch_evaluation.id if batch_evaluation else None,
                 resume_submission_id=submission.id,
                 job_version_id=job_version.id,
                 resume_version_id=version.id,
-				scoring_policy_version=SCORING_POLICY_VERSION,
-				assessment_schema_version=REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
-				assessment_prompt_version=ASSESSMENT_PROMPT_VERSION,
+                scoring_policy_version=SCORING_POLICY_VERSION,
             )
             batch_submission = (
                 BatchEvaluationSubmission(
+					organization_id=job.organization_id,
+					job_id=job.id,
                     batch_evaluation_id=batch_evaluation.id,
                     resume_submission_id=submission.id,
                 )
@@ -1117,14 +1154,14 @@ async def upload_resume_batch(
                 else None
             )
             await add_resume_chain(
-				session,
-				candidate,
-				document,
-				version,
-				submission,
-				processing,
-				evaluation,
-				batch_submission,
+                session,
+                candidate,
+                document,
+                version,
+                submission,
+                processing,
+                evaluation,
+                batch_submission,
             )
             storage.put(document.storage_key, entry.content)
             accepted.append(
@@ -1142,22 +1179,52 @@ async def upload_resume_batch(
     }
 
 
-@router.post("/api/independent-evaluations", status_code=202)
+@router.post(
+    "/api/independent-evaluations",
+    status_code=202,
+    response_model=IndependentEvaluationAcceptedResponse,
+)
 async def create_independent_evaluation(
     request: Request,
     file: UploadFile = File(),
     job_description: str = Form(""),
-) -> dict[str, str]:
+    job_description_file: UploadFile | None = File(None),
+) -> IndependentEvaluationAcceptedResponse:
     user = await require_candidate(request)
     store = require_sqlalchemy_store(request)
     content = await file.read()
     try:
-        validated = validate_resume(content, file.content_type, file.filename)
+        validated = validate_document(content, file.content_type, file.filename)
     except DocumentValidationError as error:
         raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
-    job_text = job_description.strip()
-    if len(job_text) > 100_000:
-        raise APIError(400, "INVALID_REQUEST", "Job description must be at most 100,000 characters")
+    description_file_content = await read_optional_upload(job_description_file)
+    if description_file_content is not None and job_description.strip():
+        raise APIError(
+            400, "INVALID_REQUEST", "Provide either a pasted description or a file, not both"
+        )
+    job_description_key: str | None = None
+    job_description_media_type: str | None = None
+    if description_file_content is not None:
+        assert job_description_file is not None
+        try:
+            described = validate_document(
+                description_file_content,
+                job_description_file.content_type,
+                job_description_file.filename,
+            )
+        except DocumentValidationError as error:
+            raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
+        job_description_key = (
+            f"independent-job-descriptions/{new_id()}{described.extension}"
+        )
+        job_description_media_type = described.media_type
+        job_text = ""
+    else:
+        job_text = job_description.strip()
+        if len(job_text) > 100_000:
+            raise APIError(
+                400, "INVALID_REQUEST", "Job description must be at most 100,000 characters"
+            )
     evaluation = IndependentEvaluation(
         id=new_id(),
         user_id=user.id,
@@ -1165,6 +1232,8 @@ async def create_independent_evaluation(
         original_name=file.filename or "resume",
         media_type=validated.media_type,
         job_description=job_text or None,
+        job_description_key=job_description_key,
+        job_description_media_type=job_description_media_type,
     )
     processing = ProcessingJob(
         id=new_id(),
@@ -1174,10 +1243,11 @@ async def create_independent_evaluation(
     )
     async with store.sessions().begin() as session:
         session.add_all([evaluation, processing])
-        LocalObjectStorage(Path(request.app.state.settings.storage_root)).put(
-            evaluation.storage_key, content
-        )
-    return {"id": evaluation.id, "processingJobId": processing.id}
+        storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
+        storage.put(evaluation.storage_key, content)
+        if job_description_key is not None and description_file_content is not None:
+            storage.put(job_description_key, description_file_content)
+    return IndependentEvaluationAcceptedResponse(id=evaluation.id, processing_job_id=processing.id)
 
 
 @router.get("/api/independent-evaluations")
@@ -1238,7 +1308,10 @@ async def delete_independent_evaluation(evaluation_id: str, request: Request) ->
         await session.delete(evaluation)
 
 
-@router.get("/api/processing-jobs/{processing_job_id}")
+@router.get(
+    "/api/processing-jobs/{processing_job_id}",
+    response_model=ProcessingJobResponse,
+)
 async def processing_job_status(processing_job_id: str, request: Request) -> dict[str, object]:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
@@ -1260,6 +1333,8 @@ async def processing_job_status(processing_job_id: str, request: Request) -> dic
                 "id": processing.id,
                 "status": processing.status,
                 "safeError": processing.safe_error,
+                "retryable": processing.status == "ready"
+                and processing.attempt_count < processing.maximum_attempts,
             }
         submission = (
             await session.execute(
@@ -1275,6 +1350,8 @@ async def processing_job_status(processing_job_id: str, request: Request) -> dic
             "id": processing.id,
             "status": processing.status,
             "safeError": processing.safe_error,
+            "retryable": processing.status == "ready"
+            and processing.attempt_count < processing.maximum_attempts,
         }
 
 
@@ -1495,6 +1572,14 @@ async def add_resume_chain(
         session.add(batch_submission)
 
 
+async def read_optional_upload(file: UploadFile | None) -> bytes | None:
+    # Browsers submit an empty part when no file is selected.
+    if file is None or not file.filename:
+        return None
+    content = await file.read()
+    return content or None
+
+
 def require_sqlalchemy_store(request: Request) -> SQLAlchemyStore:
     store = request.app.state.store
     if not isinstance(store, SQLAlchemyStore):
@@ -1541,18 +1626,14 @@ def new_id() -> str:
     return token_urlsafe(18)
 
 
-def create_batch_evaluation(
-    job: Job, job_version: JobVersion, user_id: str
-) -> BatchEvaluation:
+def create_batch_evaluation(job: Job, job_version: JobVersion, user_id: str) -> BatchEvaluation:
     return BatchEvaluation(
         id=new_id(),
         organization_id=job.organization_id,
         job_id=job.id,
         job_version_id=job_version.id,
         created_by_user_id=user_id,
-        requirement_schema_version=(
-            job_version.schema_version or JOB_REQUIREMENTS_SCHEMA_VERSION
-        ),
+        requirement_schema_version=(job_version.schema_version or JOB_REQUIREMENTS_SCHEMA_VERSION),
         scoring_policy_version=SCORING_POLICY_VERSION,
         model_configuration={},
     )

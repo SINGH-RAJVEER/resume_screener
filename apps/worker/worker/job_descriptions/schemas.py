@@ -9,6 +9,12 @@ from ..versions import (
 	JOB_REQUIREMENTS_SCHEMA_VERSION,
 )
 
+__all__ = [
+	"JOB_REQUIREMENTS_COMPILER_VERSION",
+	"JOB_REQUIREMENTS_PROMPT_VERSION",
+	"JOB_REQUIREMENTS_SCHEMA_VERSION",
+]
+
 
 class SchemaModel(BaseModel):
 	model_config = ConfigDict(

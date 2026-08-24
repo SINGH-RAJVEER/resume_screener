@@ -289,10 +289,10 @@ class JobVersion(Base):
     source_storage_key: Mapped[str | None] = mapped_column(Text)
     draft_requirements: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     schema_version: Mapped[str | None] = mapped_column(Text)
-    prompt_version: Mapped[str | None] = mapped_column(
+    prompt_version: Mapped[str] = mapped_column(
 		Text, nullable=False, server_default=text(f"'{JOB_REQUIREMENTS_PROMPT_VERSION}'")
 	)
-    compiler_version: Mapped[str | None] = mapped_column(
+    compiler_version: Mapped[str] = mapped_column(
 		Text, nullable=False, server_default=text(f"'{JOB_REQUIREMENTS_COMPILER_VERSION}'")
 	)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

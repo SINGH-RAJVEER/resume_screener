@@ -1,9 +1,10 @@
-
 import json
 import logging
 from time import perf_counter
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from ..api.contracts import ErrorCode
 
 logger = logging.getLogger("skillsignal.api")
 MAX_BODY_BYTES = 1 << 20
@@ -15,14 +16,14 @@ class _RequestBodyTooLargeError(Exception):
 
 
 class APIError(Exception):
-    def __init__(self, status: int, code: str, message: str) -> None:
+    def __init__(self, status: int, code: ErrorCode | str, message: str) -> None:
         self.status = status
-        self.code = code
+        self.code = ErrorCode(code)
         self.message = message
 
 
-def error_body(code: str, message: str) -> dict[str, str]:
-    return {"code": code, "message": message}
+def error_body(code: ErrorCode | str, message: str) -> dict[str, str]:
+    return {"code": ErrorCode(code).value, "message": message}
 
 
 class BodySizeLimitMiddleware:
@@ -38,9 +39,7 @@ class BodySizeLimitMiddleware:
             b"",
         )
         limit = (
-            MAX_MULTIPART_BODY_BYTES
-            if b"multipart/form-data" in content_type
-            else MAX_BODY_BYTES
+            MAX_MULTIPART_BODY_BYTES if b"multipart/form-data" in content_type else MAX_BODY_BYTES
         )
         content_length = next(
             (value for key, value in scope.get("headers", []) if key.lower() == b"content-length"),

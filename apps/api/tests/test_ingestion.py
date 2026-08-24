@@ -6,19 +6,19 @@ import pytest
 from app.documents.ingestion import (
 	DocumentValidationError,
 	inspect_resume_zip,
-	validate_resume,
+	validate_document,
 )
 
 
 def test_accepts_digital_pdf_with_matching_name_and_media_type() -> None:
-	validated = validate_resume(b"%PDF-1.7\nresume", "application/pdf", "resume.pdf")
+	validated = validate_document(b"%PDF-1.7\nresume", "application/pdf", "resume.pdf")
 
 	assert validated.extension == ".pdf"
 
 
 def test_rejects_pdf_with_an_invalid_signature() -> None:
 	with pytest.raises(DocumentValidationError, match="not a PDF"):
-		validate_resume(b"not a PDF", "application/pdf", "resume.pdf")
+		validate_document(b"not a PDF", "application/pdf", "resume.pdf")
 
 
 def test_rejects_macro_enabled_docx_content() -> None:
@@ -29,7 +29,7 @@ def test_rejects_macro_enabled_docx_content() -> None:
 		archive.writestr("word/vbaProject.bin", "macro")
 
 	with pytest.raises(DocumentValidationError, match="Macro-enabled"):
-		validate_resume(
+		validate_document(
 			content.getvalue(),
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 			"resume.docx",
@@ -48,5 +48,5 @@ def test_reports_each_invalid_zip_entry_without_rejecting_valid_resumes() -> Non
 	assert [(entry.name, entry.reason) for entry in entries] == [
 		("valid.txt", None),
 		("unsafe/../resume.txt", "ZIP entry has an unsafe path"),
-		("readme.md", "Resume must be a PDF, DOCX, or TXT file"),
+		("readme.md", "Document must be a PDF, DOCX, or TXT file"),
 	]
