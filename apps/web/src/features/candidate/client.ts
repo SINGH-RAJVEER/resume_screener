@@ -20,10 +20,15 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const candidateClient = {
-	createIndependentEvaluation: (file: File, jobDescription: string) => {
+	createIndependentEvaluation: (
+		file: File,
+		jobDescription: string,
+		jobDescriptionFile?: File | null,
+	) => {
 		const body = new FormData();
 		body.append("file", file);
 		body.append("job_description", jobDescription);
+		if (jobDescriptionFile) body.append("job_description_file", jobDescriptionFile);
 		return request<{ id: string; processingJobId: string }>(
 			"/api/independent-evaluations",
 			{ method: "POST", body },

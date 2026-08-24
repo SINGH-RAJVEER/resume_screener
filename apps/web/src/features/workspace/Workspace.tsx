@@ -141,6 +141,7 @@ export const Workspace = () => {
 	const [organizationName, setOrganizationName] = useState("");
 	const [jobTitle, setJobTitle] = useState("");
 	const [description, setDescription] = useState("");
+	const [descriptionFile, setDescriptionFile] = useState<File | null>(null);
 	const [requirements, setRequirements] = useState<Requirement[]>([]);
 	const [resumes, setResumes] = useState<File[]>([]);
 	const [uploadInputKey, setUploadInputKey] = useState(0);
@@ -347,18 +348,26 @@ export const Workspace = () => {
 
 	const createJob = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!jobTitle.trim() || !description.trim() || !organizationId) return;
+		if (
+			!jobTitle.trim() ||
+			!organizationId ||
+			(!description.trim() && !descriptionFile)
+		) {
+			return;
+		}
 		try {
 			const job = await workspaceClient.createJob(
 				organizationId,
 				jobTitle,
 				description,
+				descriptionFile,
 			);
 			const detail = await workspaceClient.job(job.id);
 			setSelectedJob(detail);
 			setRequirements(draftsToRequirements(detail));
 			setJobTitle("");
 			setDescription("");
+			setDescriptionFile(null);
 			setIsCreateJobOpen(false);
 			setActiveTab("criteria");
 			setJobs(await workspaceClient.jobs(organizationId));
@@ -1049,10 +1058,29 @@ export const Workspace = () => {
 								onChange={(event) =>
 									setDescription(event.target.value)
 								}
-								placeholder="Paste the full description. Draft criteria are extracted automatically."
-								required
+								placeholder={
+									descriptionFile
+										? "Using the uploaded file. Clear it to paste instead."
+										: "Paste the full description. Draft criteria are extracted automatically."
+								}
 								value={description}
 							/>
+							<Input
+								accept=".pdf,.docx,.txt"
+								id="create-job-description-file"
+								onChange={(event) => {
+									const selected =
+										event.currentTarget.files?.[0] ??
+										null;
+									setDescriptionFile(selected);
+									if (selected) setDescription("");
+								}}
+								type="file"
+							/>
+							<p className="form-hint">
+								Paste a description or upload a PDF, DOCX, or
+								TXT file.
+							</p>
 						</div>
 						<div className="modal-actions">
 							<Button

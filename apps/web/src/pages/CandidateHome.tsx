@@ -27,6 +27,9 @@ export const CandidateHome = () => {
 	const [error, setError] = useState<string | null>(null);
 	const [privateResume, setPrivateResume] = useState<File | null>(null);
 	const [jobDescription, setJobDescription] = useState("");
+	const [jobDescriptionFile, setJobDescriptionFile] = useState<File | null>(
+		null,
+	);
 	const [privateEvaluation, setPrivateEvaluation] =
 		useState<IndependentEvaluation | null>(null);
 	const [privateHistory, setPrivateHistory] = useState<
@@ -74,6 +77,7 @@ export const CandidateHome = () => {
 			const result = await candidateClient.createIndependentEvaluation(
 				privateResume,
 				jobDescription,
+				jobDescriptionFile,
 			);
 			setPrivateEvaluation({
 				id: result.id,
@@ -86,6 +90,7 @@ export const CandidateHome = () => {
 			});
 			setPrivateResume(null);
 			setJobDescription("");
+			setJobDescriptionFile(null);
 		} catch (reason) {
 			setError(
 				reason instanceof Error
@@ -183,21 +188,42 @@ export const CandidateHome = () => {
 											PDF, DOCX, or TXT.
 										</p>
 									</div>
-									<div className="form-field">
-										<Label htmlFor="job-description">
-											Job description (optional)
-										</Label>
-										<Textarea
-											id="job-description"
-											onChange={(event) =>
-												setJobDescription(
-													event.currentTarget.value,
-												)
-											}
-											placeholder="Paste a role description to receive role-specific guidance."
-											value={jobDescription}
-										/>
-									</div>
+								<div className="form-field">
+									<Label htmlFor="job-description">
+										Job description (optional)
+									</Label>
+									<Textarea
+										id="job-description"
+										onChange={(event) =>
+											setJobDescription(
+												event.currentTarget.value,
+											)
+										}
+										placeholder={
+											jobDescriptionFile
+												? "Using the uploaded file. Clear it to paste instead."
+												: "Paste a role description to receive role-specific guidance."
+										}
+										value={jobDescription}
+									/>
+									<Input
+										accept=".pdf,.docx,.txt"
+										id="job-description-file"
+										onChange={(event) => {
+											const selected =
+												event.currentTarget.files?.[0] ??
+												null;
+											setJobDescriptionFile(selected);
+											if (selected)
+												setJobDescription("");
+										}}
+										type="file"
+									/>
+									<p className="form-hint">
+										Paste a description or upload a PDF,
+										DOCX, or TXT file.
+									</p>
+								</div>
 									<Button
 										disabled={!privateResume || isWorking}
 										type="submit"

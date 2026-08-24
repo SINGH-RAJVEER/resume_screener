@@ -82,6 +82,9 @@ def upgrade() -> None:
 			"id",
 			name="uq_batch_evaluation_organization_job",
 		),
+		sa.UniqueConstraint(
+			"organization_id", "id", name="uq_batch_evaluation_organization"
+		),
 	)
 	op.drop_constraint("uq_evaluation_submission_job_version", "evaluation", type_="unique")
 	op.add_column(
@@ -127,6 +130,11 @@ def upgrade() -> None:
 		"uq_evaluation_batch_submission",
 		"evaluation",
 		["batch_evaluation_id", "resume_submission_id"],
+	)
+	op.create_unique_constraint(
+		"uq_evaluation_batch",
+		"evaluation",
+		["batch_evaluation_id", "id"],
 	)
 	op.create_table(
 		"batch_evaluation_submission",
@@ -174,12 +182,9 @@ def upgrade() -> None:
 	op.create_table(
 		"review_decision",
 		sa.Column("id", sa.Text(), primary_key=True),
-		sa.Column(
-			"evaluation_id",
-			sa.Text(),
-			sa.ForeignKey("evaluation.id", ondelete="CASCADE"),
-			nullable=False,
-		),
+		sa.Column("organization_id", sa.Text(), nullable=False),
+		sa.Column("batch_evaluation_id", sa.Text(), nullable=False),
+		sa.Column("evaluation_id", sa.Text(), nullable=False),
 		sa.Column(
 			"reviewer_user_id",
 			sa.Text(),
@@ -197,6 +202,16 @@ def upgrade() -> None:
 		sa.CheckConstraint(
 			"eligibility IN ('eligible', 'needs_review', 'not_eligible')",
 			name="ck_review_decision_eligibility",
+		),
+		sa.ForeignKeyConstraint(
+			["organization_id", "batch_evaluation_id"],
+			["batch_evaluation.organization_id", "batch_evaluation.id"],
+			ondelete="CASCADE",
+		),
+		sa.ForeignKeyConstraint(
+			["batch_evaluation_id", "evaluation_id"],
+			["evaluation.batch_evaluation_id", "evaluation.id"],
+			ondelete="CASCADE",
 		),
 	)
 	op.add_column("independent_evaluation", sa.Column("parser_version", sa.Text()))
@@ -238,6 +253,7 @@ def downgrade() -> None:
 	op.drop_constraint("fk_evaluation_batch_submission", "evaluation", type_="foreignkey")
 	op.drop_table("batch_evaluation_submission")
 	op.drop_constraint("uq_evaluation_batch_submission", "evaluation", type_="unique")
+	op.drop_constraint("uq_evaluation_batch", "evaluation", type_="unique")
 	op.drop_constraint("ck_evaluation_evidence_coverage", "evaluation", type_="check")
 	op.drop_constraint("ck_evaluation_score", "evaluation", type_="check")
 	op.drop_constraint("ck_evaluation_status", "evaluation", type_="check")

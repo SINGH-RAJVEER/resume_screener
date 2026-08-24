@@ -56,7 +56,7 @@ export interface JobDetail {
 	id: string;
 	organizationId: string;
 	title: string;
-	description: string;
+	description: string | null;
 	confirmed: boolean;
 	applicationOpensAt: string | null;
 	applicationClosesAt: string | null;
@@ -169,18 +169,22 @@ export const workspaceClient = {
 		anchor.click();
 		URL.revokeObjectURL(url);
 	},
-	createJob: (organizationId: string, title: string, description: string) =>
-		request<{ id: string; versionId: string; processingJobId: string }>(
+	createJob: (
+		organizationId: string,
+		title: string,
+		description: string,
+		descriptionFile?: File | null,
+	) => {
+		const body = new FormData();
+		body.append("organization_id", organizationId);
+		body.append("title", title);
+		body.append("description", description);
+		if (descriptionFile) body.append("file", descriptionFile);
+		return request<{ id: string; versionId: string; processingJobId: string }>(
 			"/api/jobs",
-			{
-				method: "POST",
-				body: JSON.stringify({
-					organization_id: organizationId,
-					title,
-					description,
-				}),
-			},
-		),
+			{ method: "POST", body },
+		);
+	},
 	confirmRequirements: (jobId: string, requirements: Requirement[]) =>
 		request<{ confirmed: boolean }>(`/api/jobs/${jobId}/requirements`, {
 			method: "POST",

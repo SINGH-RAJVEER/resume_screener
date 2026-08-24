@@ -427,6 +427,7 @@ class BatchEvaluation(Base):
 		UniqueConstraint(
 			"organization_id", "job_id", "id", name="uq_batch_evaluation_organization_job"
 		),
+		UniqueConstraint("organization_id", "id", name="uq_batch_evaluation_organization"),
 	)
 
 	id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -469,6 +470,7 @@ class Evaluation(Base):
 			"resume_submission_id",
 			name="uq_evaluation_batch_submission",
         ),
+		UniqueConstraint("batch_evaluation_id", "id", name="uq_evaluation_batch"),
 		ForeignKeyConstraint(
 			["batch_evaluation_id", "resume_submission_id"],
 			[
@@ -579,12 +581,22 @@ class ReviewDecision(Base):
 			"eligibility IN ('eligible', 'needs_review', 'not_eligible')",
 			name="ck_review_decision_eligibility",
 		),
+		ForeignKeyConstraint(
+			["organization_id", "batch_evaluation_id"],
+			["batch_evaluation.organization_id", "batch_evaluation.id"],
+			ondelete="CASCADE",
+		),
+		ForeignKeyConstraint(
+			["batch_evaluation_id", "evaluation_id"],
+			["evaluation.batch_evaluation_id", "evaluation.id"],
+			ondelete="CASCADE",
+		),
 	)
 
 	id: Mapped[str] = mapped_column(Text, primary_key=True)
-	evaluation_id: Mapped[str] = mapped_column(
-		ForeignKey("evaluation.id", ondelete="CASCADE"), nullable=False
-	)
+	organization_id: Mapped[str] = mapped_column(Text, nullable=False)
+	batch_evaluation_id: Mapped[str] = mapped_column(Text, nullable=False)
+	evaluation_id: Mapped[str] = mapped_column(Text, nullable=False)
 	reviewer_user_id: Mapped[str] = mapped_column(
 		ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
 	)

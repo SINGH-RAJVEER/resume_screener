@@ -73,7 +73,10 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 		"ck_evaluation_score",
 		"ck_evaluation_evidence_coverage",
 	}
-	assert constraint_names(evaluation, UniqueConstraint) >= {"uq_evaluation_batch_submission"}
+	assert constraint_names(evaluation, UniqueConstraint) >= {
+		"uq_evaluation_batch_submission",
+		"uq_evaluation_batch",
+	}
 	assert foreign_key_targets(batch_submission) >= {
 		("organization_id", "batch_evaluation.organization_id"),
 		("organization_id", "resume_submission.organization_id"),
@@ -85,6 +88,10 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 		)
 	}
 	assert constraint_names(review_decision, CheckConstraint) >= {"ck_review_decision_eligibility"}
+	assert foreign_key_targets(review_decision) >= {
+		("organization_id", "batch_evaluation.organization_id"),
+		("batch_evaluation_id", "evaluation.batch_evaluation_id"),
+	}
 
 
 def test_persisted_artifacts_include_policy_versions() -> None:
