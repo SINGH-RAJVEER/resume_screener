@@ -16,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import WorkerSettings, load_settings
 from .documents.parser import DocumentParseError
-from .documents.processing import add_document_warnings, prepare_document
+from .documents.processing import (
+	PreparedDocument,
+	add_document_warnings,
+	prepare_document,
+)
 from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
@@ -211,7 +215,7 @@ class Worker:
 			raise NonRetryableJobError("Resume version not found")
 		content = self._read_object(str(row["storage_key"]))
 		try:
-			prepared = prepare_document(content, str(row["media_type"]))
+			prepared = await self._prepare_bounded(content, str(row["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
 		block_list = prepared.blocks
@@ -399,7 +403,9 @@ class Worker:
 		if source_storage_key:
 			content = self._read_object(str(source_storage_key))
 			try:
-				source = extract_document_text(content, str(version_row["source_media_type"]))
+				source = await self._extract_text_bounded(
+					content, str(version_row["source_media_type"])
+				)
 			except DocumentParseError as error:
 				raise NonRetryableJobError(str(error)) from error
 		elif version_row["source_text"] is not None:
@@ -585,7 +591,7 @@ class Worker:
 			raise NonRetryableJobError("Independent evaluation not found")
 		content = self._read_object(str(evaluation["storage_key"]))
 		try:
-			prepared = prepare_document(content, str(evaluation["media_type"]))
+			prepared = await self._prepare_bounded(content, str(evaluation["media_type"]))
 		except DocumentParseError as error:
 			raise NonRetryableJobError(str(error)) from error
 		if prepared.quality_state != "ready":
@@ -597,7 +603,7 @@ class Worker:
 		description_key = evaluation["job_description_key"]
 		if description_key:
 			try:
-				job_description = extract_document_text(
+				job_description = await self._extract_text_bounded(
 					self._read_object(str(description_key)),
 					str(evaluation["job_description_media_type"]),
 				)
@@ -719,6 +725,28 @@ class Worker:
 					"scoring_policy_version": SCORING_POLICY_VERSION,
 				},
 			)
+
+	async def _prepare_bounded(self, content: bytes, media_type: str) -> PreparedDocument:
+		try:
+			return await asyncio.wait_for(
+				asyncio.to_thread(prepare_document, content, media_type),
+				self._settings.parse_timeout_seconds,
+			)
+		except TimeoutError as error:
+			raise NonRetryableJobError(
+				"Document parsing exceeded the configured time limit"
+			) from error
+
+	async def _extract_text_bounded(self, content: bytes, media_type: str) -> str:
+		try:
+			return await asyncio.wait_for(
+				asyncio.to_thread(extract_document_text, content, media_type),
+				self._settings.parse_timeout_seconds,
+			)
+		except TimeoutError as error:
+			raise NonRetryableJobError(
+				"Document parsing exceeded the configured time limit"
+			) from error
 
 	def _read_object(self, key: str) -> bytes:
 		path = self._object_path(key)

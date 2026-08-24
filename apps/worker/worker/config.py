@@ -21,6 +21,7 @@ class WorkerSettings:
 	storage_root: Path
 	poll_interval_seconds: float
 	lease_seconds: int
+	parse_timeout_seconds: float
 	openrouter: OpenRouterSettings
 
 	@property
@@ -34,8 +35,9 @@ def load_settings() -> WorkerSettings:
 		raise ValueError("DATABASE_URL environment variable is required")
 	poll_interval = float(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "2"))
 	lease_seconds = int(os.environ.get("WORKER_LEASE_SECONDS", "60"))
-	if poll_interval <= 0 or lease_seconds <= 0:
-		raise ValueError("Worker intervals must be positive")
+	parse_timeout = float(os.environ.get("PARSE_TIMEOUT_SECONDS", "30"))
+	if poll_interval <= 0 or lease_seconds <= 0 or parse_timeout <= 0:
+		raise ValueError("Worker intervals and timeouts must be positive")
 	openrouter = OpenRouterSettings(
 		api_key=os.environ.get("OPENROUTER_API_KEY") or None,
 		base_url=os.environ.get("OPENROUTER_BASE_URL", "")
@@ -54,5 +56,6 @@ def load_settings() -> WorkerSettings:
 		storage_root=Path(os.environ.get("STORAGE_ROOT", ".local-storage")),
 		poll_interval_seconds=poll_interval,
 		lease_seconds=lease_seconds,
+		parse_timeout_seconds=parse_timeout,
 		openrouter=openrouter,
 	)
