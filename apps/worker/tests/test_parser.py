@@ -14,10 +14,21 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def pdf_with_pages(
 	*page_texts: str | None, width: float = 612, height: float = 792
 ) -> bytes:
-	writer = PdfWriter()
+	pages: list[list[tuple[float, float, str]] | None] = []
 	for text in page_texts:
+		pages.append([(72, 720, text)] if text is not None else None)
+	return pdf_with_placed_lines(pages, width=width, height=height)
+
+
+def pdf_with_placed_lines(
+	pages: list[list[tuple[float, float, str]] | None],
+	width: float = 612,
+	height: float = 792,
+) -> bytes:
+	writer = PdfWriter()
+	for placements in pages:
 		page = writer.add_blank_page(width=width, height=height)
-		if text is None:
+		if not placements:
 			continue
 		font = DictionaryObject(
 			{
@@ -29,8 +40,11 @@ def pdf_with_pages(
 		page[NameObject("/Resources")] = DictionaryObject(
 			{NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
 		)
+		commands = "\n".join(
+			f"BT /F1 12 Tf {x} {y} Td ({text}) Tj ET" for x, y, text in placements
+		)
 		stream = DecodedStreamObject()
-		stream.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode())
+		stream.set_data(commands.encode())
 		page[NameObject("/Contents")] = stream
 	output = BytesIO()
 	writer.write(output)
@@ -148,6 +162,64 @@ def test_extracts_pdf_pages_and_flags_a_page_without_text() -> None:
 		"state": "review_required",
 		"warnings": ["1 of 2 pages contained no extractable text"],
 	}
+
+
+def test_orders_two_column_pdf_left_column_first_with_bboxes() -> None:
+	parsed = extract_blocks(
+		pdf_with_placed_lines(
+			[
+				[
+					(72, 720, "Ada Lovelace"),
+					(72, 700, "Built Python services."),
+					(72, 680, "More left column detail."),
+					(350, 720, "SKILLS"),
+					(350, 700, "Kubernetes and PostgreSQL."),
+				]
+			]
+		),
+		"application/pdf",
+	)
+
+	texts = [block["text"] for block in parsed["blocks"]]
+	assert texts == [
+		"Ada Lovelace\nBuilt Python services.\nMore left column detail.",
+		"SKILLS\nKubernetes and PostgreSQL.",
+	]
+	assert [block["readingOrder"] for block in parsed["blocks"]] == [1, 2]
+	left_bbox = parsed["blocks"][0]["bbox"]
+	right_bbox = parsed["blocks"][1]["bbox"]
+	assert left_bbox is not None and right_bbox is not None
+	assert len(left_bbox) == 4 and len(right_bbox) == 4
+	assert left_bbox[0] < right_bbox[0]
+	assert left_bbox[1] < left_bbox[3]
+	assert right_bbox[1] < right_bbox[3]
+
+
+def test_merges_close_single_column_pdf_lines_into_one_block() -> None:
+	parsed = extract_blocks(
+		pdf_with_placed_lines(
+			[[(72, 720, "Ada Lovelace"), (72, 700, "Python platform engineer.")]]
+		),
+		"application/pdf",
+	)
+
+	assert len(parsed["blocks"]) == 1
+	assert parsed["blocks"][0]["text"] == "Ada Lovelace\nPython platform engineer."
+	assert parsed["blocks"][0]["bbox"] is not None
+
+
+def test_separates_single_column_pdf_sections_by_vertical_gap() -> None:
+	parsed = extract_blocks(
+		pdf_with_placed_lines(
+			[[(72, 720, "Ada Lovelace"), (72, 620, "Experience building platforms.")]]
+		),
+		"application/pdf",
+	)
+
+	assert [block["text"] for block in parsed["blocks"]] == [
+		"Ada Lovelace",
+		"Experience building platforms.",
+	]
 
 
 def test_rejects_image_only_pdf() -> None:

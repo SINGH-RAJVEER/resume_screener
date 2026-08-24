@@ -2,7 +2,8 @@ import re
 import unicodedata
 from collections import Counter
 from io import BytesIO
-from typing import Literal, TypedDict
+from statistics import median
+from typing import Literal, NamedTuple, TypedDict, cast
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
@@ -15,6 +16,13 @@ MAX_PDF_DECOMPRESSED_STREAM_BYTES = 25 * 1024 * 1024
 MAX_EXTRACTED_CHARACTERS = 250_000
 MIN_RELIABLE_NON_WHITESPACE_CHARACTERS = 40
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+# PDF geometry heuristics. Coordinates keep the PDF coordinate system, where
+# the origin is the bottom-left corner of the page.
+PDF_LINE_TOLERANCE_POINTS = 3.0
+PDF_COLUMN_GAP_POINTS = 40.0
+PDF_COLUMN_BOUNDARY_TOLERANCE = 20.0
+PDF_BLOCK_MERGE_FACTOR = 1.8
+PDF_CHAR_WIDTH_FACTOR = 0.55
 INSTRUCTION_LIKE_TEXT = re.compile(
 	r"\b(?:ignore (?:all |any )?(?:previous|prior) instructions|"
 	r"reveal (?:the )?system prompt|give this resume (?:a )?perfect score)\b",
@@ -97,6 +105,13 @@ def extract_blocks(content: bytes, media_type: str) -> ParsedDocument:
 	raise DocumentParseError("Unsupported resume document type")
 
 
+class PdfFragment(NamedTuple):
+	text: str
+	x: float
+	y: float
+	size: float
+
+
 def extract_pdf_blocks(content: bytes) -> ParsedDocument:
 	try:
 		reader = PdfReader(BytesIO(content), strict=True)
@@ -119,21 +134,192 @@ def extract_pdf_blocks(content: bytes) -> ParsedDocument:
 		raise
 	except Exception as error:
 		raise DocumentParseError("Resume PDF could not be parsed") from error
-	page_text: list[str] = []
+	blocks: list[EvidenceBlock] = []
+	empty_page_count = 0
 	try:
-		for page in pages:
-			page_text.append(normalize_text(page.extract_text() or "", allow_empty=True))
+		for page_number, page in enumerate(pages, start=1):
+			fragments = pdf_page_fragments(page)
+			fallback_text = ""
+			if not fragments:
+				fallback_text = normalize_text(
+					str(page.extract_text() or ""), allow_empty=True
+				).strip()
+			if not fragments and not fallback_text:
+				empty_page_count += 1
+				continue
+			page_blocks = pdf_page_blocks(fragments, fallback_text, page_number, len(blocks))
+			blocks.extend(page_blocks)
+			if not page_blocks:
+				empty_page_count += 1
+	except DocumentParseError:
+		raise
 	except Exception as error:
 		raise DocumentParseError("Resume PDF text could not be extracted") from error
-	if not any(item.strip() for item in page_text):
+	if not blocks:
 		raise DocumentParseError("Scanned or image-only resume PDFs are not supported")
-	blocks = paragraph_blocks(page_text, "pdf_text")
 	return parsed_document(
 		blocks,
 		media_type="application/pdf",
-		page_count=len(page_text),
-		empty_page_count=sum(not item.strip() for item in page_text),
+		page_count=len(pages),
+		empty_page_count=empty_page_count,
 	)
+
+
+def pdf_page_fragments(page: object) -> list[PdfFragment]:
+	fragments: list[PdfFragment] = []
+
+	def visitor(
+		text: object, cm: object, tm: object, font_dict: object, font_size: object
+	) -> None:
+		clean = str(text).strip()
+		if not clean:
+			return
+		matrix = cast(list[object], tm)
+		x = float(cast(float, matrix[4]))
+		y = float(cast(float, matrix[5]))
+		size = float(font_size) if isinstance(font_size, (int, float)) else 12.0
+		fragments.append(PdfFragment(clean, x, y, size))
+
+	cast(object, page).extract_text(visitor_text=visitor)  # type: ignore[attr-defined]
+	return fragments
+
+
+def fragment_width(fragment: PdfFragment) -> float:
+	return len(fragment.text) * fragment.size * PDF_CHAR_WIDTH_FACTOR
+
+
+def group_pdf_lines(fragments: list[PdfFragment]) -> list[list[PdfFragment]]:
+	ordered = sorted(fragments, key=lambda fragment: (-fragment.y, fragment.x))
+	lines: list[list[PdfFragment]] = []
+	for fragment in ordered:
+		if lines and abs(lines[-1][0].y - fragment.y) <= PDF_LINE_TOLERANCE_POINTS:
+			lines[-1].append(fragment)
+		else:
+			lines.append([fragment])
+	for line in lines:
+		line.sort(key=lambda fragment: fragment.x)
+	return lines
+
+
+def split_line_segments(line: list[PdfFragment]) -> list[list[PdfFragment]]:
+	segments: list[list[PdfFragment]] = [[line[0]]]
+	for fragment in line[1:]:
+		previous = segments[-1][-1]
+		gap = fragment.x - (previous.x + fragment_width(previous))
+		if gap > PDF_COLUMN_GAP_POINTS:
+			segments.append([fragment])
+		else:
+			segments[-1].append(fragment)
+	return segments
+
+
+def ordered_pdf_lines(
+	lines: list[list[PdfFragment]],
+) -> list[tuple[int, list[PdfFragment]]]:
+	splits = [split_line_segments(line) for line in lines]
+	if sum(1 for segments in splits if len(segments) > 1) < 2:
+		return [(0, line) for line in sorted(lines, key=lambda line: -line[0].y)]
+	boundaries: list[float] = []
+	for segments in splits:
+		for left, right in zip(segments, segments[1:]):
+			mid = (left[-1].x + fragment_width(left[-1]) + right[0].x) / 2
+			boundaries.append(mid)
+	boundaries.sort()
+	column_boundaries: list[float] = []
+	for boundary in boundaries:
+		if (
+			not column_boundaries
+			or boundary - column_boundaries[-1] > PDF_COLUMN_BOUNDARY_TOLERANCE
+		):
+			column_boundaries.append(boundary)
+
+	def column_index(segment: list[PdfFragment]) -> int:
+		return sum(1 for boundary in column_boundaries if segment[0].x > boundary)
+
+	ordered: list[tuple[int, list[PdfFragment]]] = []
+	for segments in splits:
+		for segment in segments:
+			ordered.append((column_index(segment), segment))
+	ordered.sort(key=lambda item: (item[0], -item[1][0].y))
+	return ordered
+
+
+def pdf_page_blocks(
+	fragments: list[PdfFragment],
+	fallback_text: str,
+	page_number: int,
+	previous_block_count: int,
+) -> list[EvidenceBlock]:
+	if not fragments:
+		return [
+			evidence_block(
+				page_number,
+				previous_block_count + 1,
+				fallback_text,
+				"pdf_text",
+				None,
+			)
+		]
+	lines = group_pdf_lines(fragments)
+	ordered = ordered_pdf_lines(lines)
+	# Expected leading follows the median font size; observed gaps cannot
+	# reveal a section break when a page has too few lines.
+	font_sizes = [fragment.size for line in lines for fragment in line]
+	merge_gap = median(font_sizes) * PDF_BLOCK_MERGE_FACTOR if font_sizes else None
+	blocks: list[EvidenceBlock] = []
+	line_texts: list[str] = []
+	bbox: list[float] | None = None
+	previous_column: int | None = None
+	previous_y: float | None = None
+
+	def flush() -> None:
+		nonlocal line_texts, bbox
+		text = normalize_text("\n".join(line_texts), allow_empty=True).strip()
+		if text:
+			blocks.append(
+				evidence_block(
+					page_number,
+					previous_block_count + len(blocks) + 1,
+					text,
+					"pdf_text",
+					bbox,
+				)
+			)
+		line_texts = []
+		bbox = None
+
+	for column, segment in ordered:
+		started_new_block = previous_column is not None and (
+			column != previous_column
+			or (
+				merge_gap is not None
+				and previous_y is not None
+				and previous_y - segment[0].y > merge_gap
+			)
+		)
+		if started_new_block:
+			flush()
+		line_texts.append(" ".join(fragment.text for fragment in segment))
+		segment_bbox = [
+			min(fragment.x for fragment in segment),
+			min(fragment.y for fragment in segment) - segment[0].size,
+			max(fragment.x + fragment_width(fragment) for fragment in segment),
+			max(fragment.y for fragment in segment) + segment[0].size,
+		]
+		bbox = (
+			segment_bbox
+			if bbox is None
+			else [
+				min(bbox[0], segment_bbox[0]),
+				min(bbox[1], segment_bbox[1]),
+				max(bbox[2], segment_bbox[2]),
+				max(bbox[3], segment_bbox[3]),
+			]
+		)
+		previous_column = column
+		previous_y = segment[0].y
+	flush()
+	return blocks
 
 
 def extract_docx_paragraphs(content: bytes) -> list[str]:
@@ -188,6 +374,23 @@ def normalize_text(text: str, *, allow_empty: bool = False) -> str:
 	return normalized
 
 
+def evidence_block(
+	page: int,
+	reading_order: int,
+	text: str,
+	method: Literal["plain_text", "pdf_text", "docx_xml"],
+	bbox: list[float] | None,
+) -> EvidenceBlock:
+	return {
+		"id": f"p{page}-b{reading_order}",
+		"page": page,
+		"readingOrder": reading_order,
+		"text": text,
+		"method": method,
+		"bbox": bbox,
+	}
+
+
 def paragraph_blocks(
 	pages: list[str],
 	method: Literal["plain_text", "pdf_text", "docx_xml"],
@@ -202,22 +405,11 @@ def paragraph_blocks(
 			if split_paragraphs
 			else [page_text_value]
 		)
-		page_block_number = 1
 		for paragraph in paragraphs:
 			text = paragraph.strip()
 			if not text:
 				continue
-			blocks.append(
-				{
-					"id": f"p{page_number}-b{page_block_number}",
-					"page": page_number,
-					"readingOrder": reading_order,
-					"text": text,
-					"method": method,
-					"bbox": None,
-				}
-			)
-			page_block_number += 1
+			blocks.append(evidence_block(page_number, reading_order, text, method, None))
 			reading_order += 1
 	return blocks
 
