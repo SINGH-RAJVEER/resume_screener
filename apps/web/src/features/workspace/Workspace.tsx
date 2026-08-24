@@ -866,6 +866,9 @@ export const Workspace = () => {
 												normalizedText: "",
 												kind: "required",
 												weight: 2,
+												category: "other",
+												assessability:
+													"resume_evidence",
 											},
 										])
 									}

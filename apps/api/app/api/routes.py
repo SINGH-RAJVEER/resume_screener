@@ -549,7 +549,9 @@ async def confirm_requirements(
         await session.flush()
         for requirement in input_data.requirements:
             draft: dict[str, object] = draft_by_id.get(requirement.stable_id, {})
-            assessability = str(draft.get("assessability", "resume_evidence"))
+            source_text = str(draft.get("normalizedText", "")).strip()
+            metadata = draft if source_text == requirement.normalized_text.strip() else {}
+            assessability = str(metadata.get("assessability", "resume_evidence"))
             if assessability != "resume_evidence" and requirement.kind != "ignored":
                 raise APIError(
                     400,
@@ -564,12 +566,12 @@ async def confirm_requirements(
                     kind=requirement.kind,
                     weight=requirement.weight,
                     normalized_text=requirement.normalized_text,
-                    category=str(draft.get("category", "other")),
-                    source_modality=str(draft.get("sourceModality", "unclear")),
+                    category=str(metadata.get("category", "other")),
+                    source_modality=str(metadata.get("sourceModality", "unclear")),
                     assessability=assessability,
                     predicate=cast(
                         dict[str, object],
-                        draft.get("predicate")
+                        metadata.get("predicate")
                         or {
                             "operator": "all_of",
                             "criteria": [
@@ -586,7 +588,7 @@ async def confirm_requirements(
                     aliases=[],
                     source_evidence=cast(
                         list[dict[str, object]],
-                        draft.get("evidence") or [],
+                        metadata.get("evidence") or [],
                     ),
                 )
             )

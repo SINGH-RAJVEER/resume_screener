@@ -54,6 +54,22 @@ PREFERRED_CUE = re.compile(
 	re.IGNORECASE,
 )
 YEARS_PATTERN = re.compile(r"\b(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", re.IGNORECASE)
+WORD_YEARS_PATTERN = re.compile(
+	r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b",
+	re.IGNORECASE,
+)
+NUMBER_WORDS = {
+	"one": 1,
+	"two": 2,
+	"three": 3,
+	"four": 4,
+	"five": 5,
+	"six": 6,
+	"seven": 7,
+	"eight": 8,
+	"nine": 9,
+	"ten": 10,
+}
 DEGREE_LEVELS = {
 	"doctorate": ("phd", "doctorate", "doctoral", "dphil"),
 	"master": ("master", "mba", "mtech", "m.tech", "msc", "m.sc"),
@@ -255,7 +271,7 @@ def infer_category_and_assessability(
 			return category, Assessability.CANDIDATE_ATTESTATION
 	if SOFT_SKILL_PATTERN.search(text):
 		return RequirementCategory.SOFT_SKILL, Assessability.RECRUITER_REVIEW
-	if YEARS_PATTERN.search(text):
+	if experience_months(text) is not None:
 		return RequirementCategory.EXPERIENCE, Assessability.RESUME_EVIDENCE
 	if education_level(text):
 		return RequirementCategory.EDUCATION, Assessability.RESUME_EVIDENCE
@@ -268,13 +284,13 @@ def infer_category_and_assessability(
 
 def infer_predicate(text: str, skills: Sequence[str]) -> dict[str, object]:
 	criteria: list[dict[str, object]] = []
-	years = YEARS_PATTERN.search(text)
-	if years:
+	minimum_months = experience_months(text)
+	if minimum_months is not None:
 		criteria.append(
 			{
 				"type": CriterionType.EXPERIENCE.value,
 				"canonicalName": None,
-				"minimumMonths": int(years.group(1)) * 12,
+				"minimumMonths": minimum_months,
 				"minimumLevel": None,
 				"subjects": list(skills),
 			}
@@ -366,6 +382,9 @@ def grounded_model_candidates(
 		predicate = normalize_model_predicate(
 			requirement.predicate.model_dump(by_alias=True)
 		)
+		if not model_predicate_supported(predicate, evidence):
+			dropped += 1
+			continue
 		kind = requirement.suggested_kind
 		candidate = finalize_candidate(
 			{
@@ -400,6 +419,49 @@ def normalize_model_predicate(predicate: dict[str, object]) -> dict[str, object]
 				name.casefold(), name
 			)
 	return predicate
+
+
+def model_predicate_supported(
+	predicate: Mapping[str, object], evidence: Sequence[Mapping[str, object]]
+) -> bool:
+	evidence_text = " ".join(str(item.get("quote", "")) for item in evidence)
+	if PROHIBITED_PATTERN.search(evidence_text):
+		return False
+	evidence_skills = mentioned_skills(evidence_text)
+	raw_criteria = predicate.get("criteria")
+	if not isinstance(raw_criteria, list):
+		return False
+	for raw_criterion in cast(list[object], raw_criteria):
+		if not isinstance(raw_criterion, Mapping):
+			return False
+		criterion = cast(Mapping[str, object], raw_criterion)
+		criterion_type = str(criterion.get("type", "other"))
+		if criterion_type == CriterionType.SKILL.value:
+			name = str(criterion.get("canonicalName") or "").strip()
+			if name not in evidence_skills and name.casefold() not in evidence_text.casefold():
+				return False
+		elif criterion_type == CriterionType.EXPERIENCE.value:
+			minimum_months = criterion.get("minimumMonths")
+			if (
+				not isinstance(minimum_months, int)
+				or experience_months(evidence_text) != minimum_months
+			):
+				return False
+			subjects = criterion.get("subjects")
+			if isinstance(subjects, list) and any(
+				str(subject) not in evidence_skills
+				and str(subject).casefold() not in evidence_text.casefold()
+				for subject in cast(list[object], subjects)
+			):
+				return False
+		elif criterion_type == CriterionType.EDUCATION.value:
+			if str(criterion.get("minimumLevel") or "") != education_level(evidence_text):
+				return False
+		elif criterion_type == CriterionType.CERTIFICATION.value:
+			name = str(criterion.get("canonicalName") or "").strip()
+			if not name or name.casefold() not in evidence_text.casefold():
+				return False
+	return True
 
 
 def deduplicate(
@@ -488,6 +550,16 @@ def education_level(text: str) -> str | None:
 	for level, phrases in DEGREE_LEVELS.items():
 		if any(phrase in lowered for phrase in phrases):
 			return level
+	return None
+
+
+def experience_months(text: str) -> int | None:
+	digits = YEARS_PATTERN.search(text)
+	if digits:
+		return int(digits.group(1)) * 12
+	words = WORD_YEARS_PATTERN.search(text)
+	if words:
+		return NUMBER_WORDS[words.group(1).casefold()] * 12
 	return None
 
 

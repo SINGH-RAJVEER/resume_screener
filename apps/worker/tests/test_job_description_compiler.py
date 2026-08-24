@@ -28,6 +28,15 @@ Benefits
 	]
 	assert drafts[0]["suggestedKind"] == "required"
 	assert drafts[0]["assessability"] == "resume_evidence"
+	assert cast(dict[str, object], drafts[0]["predicate"])["criteria"] == [
+		{
+			"type": "experience",
+			"canonicalName": None,
+			"minimumMonths": 60,
+			"minimumLevel": None,
+			"subjects": ["Python"],
+		}
+	]
 	assert artifact["schemaVersion"] == "2"
 
 
@@ -129,7 +138,9 @@ def test_grounded_model_output_is_fused_and_ungrounded_output_is_dropped() -> No
 						}
 					],
 				},
-				"evidence": [{"blockId": "jd-b1", "quote": "not in source"}],
+				"evidence": [
+					{"blockId": "jd-b1", "quote": "Experience building Python APIs"}
+				],
 				"confidence": 0.9,
 			},
 		],
@@ -149,4 +160,5 @@ def test_grounded_model_output_is_fused_and_ungrounded_output_is_dropped() -> No
 		}
 	]
 	assert "model" in cast(list[str], drafts[0]["signals"])
-	assert any("ungrounded" in warning for warning in cast(list[str], artifact["warnings"]))
+	warnings = cast(list[str], artifact["warnings"])
+	assert any("unsafe or ungrounded" in warning for warning in warnings)
