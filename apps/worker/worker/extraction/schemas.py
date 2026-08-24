@@ -5,7 +5,7 @@ stay comparable across the API and worker deployables.
 """
 
 from enum import StrEnum
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -44,6 +44,7 @@ class ContactFacts(SchemaModel):
 	email: str | None = Field(default=None, max_length=320)
 	phone: str | None = Field(default=None, max_length=64)
 	location: str | None = Field(default=None, max_length=256)
+	evidence: list[EvidenceQuote] = Field(default=[], max_length=20)
 
 
 class SkillFact(SchemaModel):
@@ -58,6 +59,7 @@ class EmploymentFact(SchemaModel):
 	start_date: str | None = Field(default=None, pattern=DATE_PATTERN)
 	end_date: str | None = Field(default=None, pattern=DATE_PATTERN)
 	is_current: bool
+	evidence: list[EvidenceQuote] = Field(min_length=1, max_length=20)
 
 
 class EducationFact(SchemaModel):
@@ -65,11 +67,13 @@ class EducationFact(SchemaModel):
 	degree: str | None = Field(default=None, max_length=256)
 	field_of_study: str | None = Field(default=None, max_length=256)
 	graduation_date: str | None = Field(default=None, pattern=DATE_PATTERN)
+	evidence: list[EvidenceQuote] = Field(min_length=1, max_length=20)
 
 
 class CertificationFact(SchemaModel):
 	name: str = Field(min_length=1, max_length=256)
 	issuer: str | None = Field(default=None, max_length=256)
+	evidence: list[EvidenceQuote] = Field(min_length=1, max_length=20)
 
 
 class Suggestion(SchemaModel):
@@ -98,7 +102,7 @@ class AssessmentOutput(SchemaModel):
 
 
 class ResumeExtraction(SchemaModel):
-	schema_version: str = RESUME_FACTS_SCHEMA_VERSION
+	schema_version: Literal["2"] = RESUME_FACTS_SCHEMA_VERSION
 	contact: ContactFacts
 	skills: list[SkillFact] = Field(max_length=200)
 	employment: list[EmploymentFact] = Field(max_length=100)

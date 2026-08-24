@@ -4,7 +4,7 @@ from typing import cast
 from pydantic import ValidationError
 
 from ..documents.vocabulary import load_vocabulary
-from ..providers.openrouter import OpenRouterClient, OpenRouterError, document_file_part
+from ..providers.openrouter import OpenRouterClient, OpenRouterError
 from .prompt import ASSESSMENT_SYSTEM_PROMPT, EXTRACTION_SYSTEM_PROMPT
 from .schemas import (
 	RESUME_FACTS_SCHEMA_VERSION,
@@ -29,7 +29,6 @@ async def extract_resume_facts(
 	model: str,
 	blocks: Sequence[Mapping[str, object]],
 	max_output_tokens: int = 4096,
-	document: tuple[str, bytes, str] | None = None,
 ) -> dict[str, object]:
 	parts: list[dict[str, object]] = [
 		{
@@ -37,11 +36,6 @@ async def extract_resume_facts(
 			"text": "<resume_document>\n" + blocks_document(blocks) + "\n</resume_document>",
 		}
 	]
-	if document is not None:
-		filename, content, media_type = document
-		file_part = document_file_part(filename, content, media_type)
-		if file_part is not None:
-			parts.append(file_part)
 	raw = await client.complete_json(
 		model=model,
 		system_prompt=EXTRACTION_SYSTEM_PROMPT,
@@ -50,26 +44,43 @@ async def extract_resume_facts(
 		schema=strict_schema(ResumeExtraction),
 		max_output_tokens=max_output_tokens,
 	)
-	return validate_extraction(raw, {str(block["id"]) for block in blocks})
+	return validate_extraction(
+		raw,
+		{str(block["id"]): str(block.get("text", "")) for block in blocks},
+	)
 
 
-def validate_extraction(raw: dict[str, object], block_ids: set[str]) -> dict[str, object]:
+def validate_extraction(
+	raw: dict[str, object], block_texts: Mapping[str, str]
+) -> dict[str, object]:
 	try:
 		extraction = ResumeExtraction.model_validate(raw)
 	except ValidationError as error:
 		raise OpenRouterError("Model extraction does not match the schema") from error
 	facts = extraction.model_dump(by_alias=True)
-	facts["skills"] = [
-		pruned
-		for skill in facts["skills"]
-		if (pruned := prune_skill(cast(dict[str, object], skill), block_ids)) is not None
-	]
-	dropped = len(extraction.skills) - len(facts["skills"])
-	if dropped:
-		facts["warnings"] = [
-			*cast(list[str], facts["warnings"]),
-			f"{dropped} skills lacked valid evidence",
+	warnings = cast(list[str], facts["warnings"])
+	for field in ("skills", "employment", "education", "certifications"):
+		entries = cast(list[object], facts[field])
+		grounded = [
+			validated
+			for item in entries
+			if isinstance(item, dict)
+			and (
+				validated := validate_fact_evidence(
+					cast(dict[str, object], item), block_texts
+				)
+			)
+			is not None
 		]
+		facts[field] = grounded
+		dropped = len(entries) - len(grounded)
+		if dropped:
+			warnings.append(f"{dropped} {field} lacked valid evidence")
+	facts["contact"], dropped_contact_fields = validate_contact_evidence(
+		cast(dict[str, object], facts["contact"]), block_texts
+	)
+	if dropped_contact_fields:
+		warnings.append(f"{dropped_contact_fields} contact fields lacked source evidence")
 	facts["schemaVersion"] = RESUME_FACTS_SCHEMA_VERSION
 	return facts
 
@@ -153,19 +164,38 @@ def valid_evidence_quote(
 	return bool(quote) and quote in block_texts.get(block_id, "")
 
 
-def prune_skill(
-	skill: dict[str, object], block_ids: set[str]
+def validate_fact_evidence(
+	fact: dict[str, object], block_texts: Mapping[str, str]
 ) -> dict[str, object] | None:
-	entries = cast(list[object], skill.get("evidence") or [])
-	valid = [
+	evidence = [
 		cast(dict[str, object], entry)
-		for entry in entries
+		for entry in cast(list[object], fact.get("evidence") or [])
 		if isinstance(entry, dict)
-		and str(cast(dict[str, object], entry).get("blockId", "")) in block_ids
+		and valid_evidence_quote(cast(dict[str, object], entry), block_texts)
 	]
-	if not valid:
+	if not evidence:
 		return None
-	return {**skill, "evidence": valid}
+	return {**fact, "evidence": evidence}
+
+
+def validate_contact_evidence(
+	contact: dict[str, object], block_texts: Mapping[str, str]
+) -> tuple[dict[str, object], int]:
+	grounded = validate_fact_evidence(contact, block_texts)
+	valid_evidence = cast(list[dict[str, object]], grounded.get("evidence", [])) if grounded else []
+	cited_texts = [
+		block_texts.get(str(evidence.get("blockId", "")), "") for evidence in valid_evidence
+	]
+	dropped = 0
+	result = {**contact, "evidence": valid_evidence}
+	for field in ("name", "email", "phone", "location"):
+		value = result.get(field)
+		if value is None:
+			continue
+		if not any(str(value).casefold() in text.casefold() for text in cited_texts):
+			result[field] = None
+			dropped += 1
+	return result, dropped
 
 
 def merge_facts(

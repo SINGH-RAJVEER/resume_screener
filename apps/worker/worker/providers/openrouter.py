@@ -1,4 +1,3 @@
-import base64
 import json
 from collections.abc import Sequence
 from typing import cast
@@ -20,17 +19,6 @@ class OpenRouterError(Exception):
 
 class OpenRouterRetryableError(OpenRouterError):
 	"""Transient provider failure that a bounded job retry may resolve."""
-
-
-def document_file_part(
-	filename: str, content: bytes, media_type: str
-) -> dict[str, object] | None:
-	# OpenRouter forwards PDFs natively to file-capable models; DOCX and TXT
-	# are not file-input formats, so callers send their extracted text only.
-	if media_type != "application/pdf":
-		return None
-	data_url = "data:application/pdf;base64," + base64.b64encode(content).decode()
-	return {"type": "file", "file": {"filename": filename, "file_data": data_url}}
 
 
 class OpenRouterClient:

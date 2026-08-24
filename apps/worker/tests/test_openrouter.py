@@ -1,6 +1,4 @@
-import base64
 import json
-from typing import cast
 
 import httpx
 import pytest
@@ -9,7 +7,6 @@ from worker.providers.openrouter import (
 	OpenRouterClient,
 	OpenRouterError,
 	OpenRouterRetryableError,
-	document_file_part,
 	parse_json_completion,
 )
 
@@ -159,23 +156,6 @@ def test_refusal_is_not_retryable() -> None:
 	}
 	with pytest.raises(OpenRouterError):
 		parse_json_completion(body)
-
-
-def test_document_file_part_encodes_pdfs_only() -> None:
-	part = document_file_part("resume.pdf", b"%PDF-1.7", "application/pdf")
-	assert part is not None
-	file = cast(dict[str, object], part["file"])
-	filename = file.get("filename")
-	data_url = file.get("file_data")
-	assert filename == "resume.pdf"
-	assert isinstance(data_url, str)
-	assert data_url.startswith("data:application/pdf;base64,")
-	prefix = "data:application/pdf;base64,"
-	assert base64.b64decode(data_url.removeprefix(prefix)) == b"%PDF-1.7"
-	docx_type = (
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	)
-	assert document_file_part("resume.docx", b"PK", docx_type) is None
 
 
 async def test_embed_texts_returns_indexed_vectors() -> None:

@@ -209,17 +209,12 @@ class Worker:
 		extracted_facts: Mapping[str, object] | None = None
 		if self._openrouter is not None:
 			try:
-				extracted = await extract_resume_facts(
-					self._openrouter,
-					model=self._settings.openrouter.extraction_model,
-					blocks=block_list,
-					max_output_tokens=self._settings.openrouter.max_output_tokens,
-					document=(
-						str(row["original_name"]),
-						content,
-						str(row["media_type"]),
-					),
-				)
+					extracted = await extract_resume_facts(
+						self._openrouter,
+						model=self._settings.openrouter.extraction_model,
+						blocks=block_list,
+						max_output_tokens=self._settings.openrouter.max_output_tokens,
+					)
 			except OpenRouterError as error:
 				logger.warning(
 					"model extraction failed; using deterministic facts",
@@ -548,17 +543,12 @@ class Worker:
 			)
 		if self._openrouter is not None:
 			try:
-				extracted = await extract_resume_facts(
-					self._openrouter,
-					model=self._settings.openrouter.extraction_model,
-					blocks=block_list,
-					max_output_tokens=self._settings.openrouter.max_output_tokens,
-					document=(
-						str(evaluation["original_name"]),
-						content,
-						str(evaluation["media_type"]),
-					),
-				)
+					extracted = await extract_resume_facts(
+						self._openrouter,
+						model=self._settings.openrouter.extraction_model,
+						blocks=block_list,
+						max_output_tokens=self._settings.openrouter.max_output_tokens,
+					)
 			except OpenRouterError as error:
 				logger.warning(
 					"model extraction failed; using deterministic facts",
