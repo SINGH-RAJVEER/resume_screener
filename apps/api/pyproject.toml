@@ -27,12 +27,12 @@ dev = [
 [tool.pyright]
 include = ["app", "tests"]
 typeCheckingMode = "strict"
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 reportUnusedFunction = false
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
