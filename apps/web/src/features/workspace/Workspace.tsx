@@ -3,6 +3,8 @@ import { Input } from "@skillsignal/ui/components/input";
 import { Label } from "@skillsignal/ui/components/label";
 import { Textarea } from "@skillsignal/ui/components/textarea";
 import {
+	ArrowDown,
+	ArrowUp,
 	Briefcase,
 	CheckCircle2,
 	ChevronRight,
@@ -20,6 +22,8 @@ import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
 	type EvaluationFilters,
+	EXPORT_COLUMNS,
+	type ExportColumn,
 	type Job,
 	type JobDetail,
 	type JoinPolicy,
@@ -31,7 +35,9 @@ import {
 
 type TabName = "results" | "criteria" | "upload";
 
-type EligibilityFilter = "all" | Evaluation["eligibility"];
+type EligibilityFilter = "all" | "top" | Evaluation["eligibility"];
+type OutcomeFilter = "all" | "met" | "partial" | "not_met" | "unknown";
+type StatusFilter = "all" | "pending" | "processing" | "complete" | "failed";
 
 type Invitation = {
 	token: string;
@@ -161,8 +167,18 @@ export const Workspace = () => {
 	const [policyEmail, setPolicyEmail] = useState("");
 	const [evaluationQuery, setEvaluationQuery] = useState("");
 	const [eligibilityFilter, setEligibilityFilter] =
-		useState<EligibilityFilter>("all");
+		useState<EligibilityFilter>("top");
+	const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>("all");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const [skillFilter, setSkillFilter] = useState("");
 	const [minimumScoreText, setMinimumScoreText] = useState("");
+	const [isExportOpen, setIsExportOpen] = useState(false);
+	const [exportSelection, setExportSelection] = useState<ExportColumn[]>([
+		...EXPORT_COLUMNS,
+	]);
+	const [exportLabels, setExportLabels] = useState<
+		Partial<Record<ExportColumn, string>>
+	>({});
 	const [notice, setNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
@@ -176,14 +192,40 @@ export const Workspace = () => {
 		setIsCreateJobOpen(false);
 		setIsWindowOpen(false);
 		setIsMembersOpen(false);
+		setIsExportOpen(false);
 		setInspectingEvaluation(null);
 	}, []);
+
+	const moveExportColumn = (column: ExportColumn, delta: number) => {
+		setExportSelection((current) => {
+			const index = current.indexOf(column);
+			const target = index + delta;
+			if (index < 0 || target < 0 || target >= current.length) {
+				return current;
+			}
+			const next = [...current];
+			next.splice(index, 1);
+			next.splice(target, 0, column);
+			return next;
+		});
+	};
 
 	const refreshEvaluations = useCallback(
 		async (jobId: string) => {
 			const filters: EvaluationFilters = {};
-			if (eligibilityFilter !== "all") {
+			if (eligibilityFilter === "top") {
+				filters.eligibility = ["eligible", "needs_review", "pending"];
+			} else if (eligibilityFilter !== "all") {
 				filters.eligibility = [eligibilityFilter];
+			}
+			if (outcomeFilter !== "all") {
+				filters.outcome = [outcomeFilter];
+			}
+			if (statusFilter !== "all") {
+				filters.status = [statusFilter];
+			}
+			if (skillFilter.trim()) {
+				filters.skill = skillFilter;
 			}
 			const parsedScore = Number(minimumScoreText);
 			if (
@@ -197,7 +239,13 @@ export const Workspace = () => {
 			}
 			setEvaluations(await workspaceClient.evaluations(jobId, filters));
 		},
-		[eligibilityFilter, minimumScoreText],
+		[
+			eligibilityFilter,
+			minimumScoreText,
+			outcomeFilter,
+			skillFilter,
+			statusFilter,
+		],
 	);
 
 	const openJob = useCallback(
@@ -602,7 +650,13 @@ export const Workspace = () => {
 	const exportCsv = async () => {
 		if (!selectedJob) return;
 		try {
-			await workspaceClient.exportEvaluationsCsv(selectedJob.id);
+			await workspaceClient.exportEvaluationsCsv(selectedJob.id, {
+				columns: exportSelection,
+				labels: exportSelection.map(
+					(column) => exportLabels[column]?.trim() || column,
+				),
+			});
+			setIsExportOpen(false);
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -901,7 +955,7 @@ export const Workspace = () => {
 								<ResultsTab
 									evaluations={evaluations}
 									eligibilityFilter={eligibilityFilter}
-									exportCsv={() => void exportCsv()}
+									exportCsv={() => setIsExportOpen(true)}
 									minimumScoreText={minimumScoreText}
 									onInspect={setInspectingEvaluation}
 									onQueue={() => setActiveTab("upload")}
@@ -910,8 +964,14 @@ export const Workspace = () => {
 										setEligibilityFilter,
 										setEvaluationQuery,
 										setMinimumScoreText,
+										setOutcomeFilter,
+										setSkillFilter,
+										setStatusFilter,
 									}}
 									evaluationQuery={evaluationQuery}
+									outcomeFilter={outcomeFilter}
+									skillFilter={skillFilter}
+									statusFilter={statusFilter}
 								/>
 							)}
 
@@ -1375,6 +1435,131 @@ export const Workspace = () => {
 				</div>
 			)}
 
+			{isExportOpen && (
+				<div
+					{...overlayBackdrop({
+						labelledBy: "export-title",
+						onDismiss: () => setIsExportOpen(false),
+					})}
+				>
+					<div className="modal-panel">
+						<h3 id="export-title">Export CSV</h3>
+						<p className="muted-copy">
+							Choose, reorder, and rename the exported columns.
+						</p>
+						<ul className="export-columns">
+							{EXPORT_COLUMNS.filter((column) =>
+								exportSelection.includes(column),
+							).map((column, index) => (
+								<li className="export-column-row" key={column}>
+									<span className="export-column-index">
+										{index + 1}
+									</span>
+									<Input
+										aria-label={`Rename ${column}`}
+										onChange={(event) =>
+											setExportLabels((current) => ({
+												...current,
+												[column]: event.target.value,
+											}))
+										}
+										placeholder={column}
+										value={exportLabels[column] ?? ""}
+									/>
+									<Button
+										aria-label={`Move ${column} up`}
+										disabled={index === 0}
+										onClick={() =>
+											moveExportColumn(column, -1)
+										}
+										size="icon-xs"
+										variant="ghost"
+									>
+										<ArrowUp />
+									</Button>
+									<Button
+										aria-label={`Move ${column} down`}
+										disabled={
+											index === exportSelection.length - 1
+										}
+										onClick={() =>
+											moveExportColumn(column, 1)
+										}
+										size="icon-xs"
+										variant="ghost"
+									>
+										<ArrowDown />
+									</Button>
+									<Button
+										aria-label={`Remove ${column}`}
+										onClick={() =>
+											setExportSelection((current) =>
+												current.filter(
+													(selected) =>
+														selected !== column,
+												),
+											)
+										}
+										size="icon-xs"
+										variant="ghost"
+									>
+										<X />
+									</Button>
+								</li>
+							))}
+						</ul>
+						{EXPORT_COLUMNS.filter(
+							(column) => !exportSelection.includes(column),
+						).length > 0 && (
+							<select
+								aria-label="Add export column"
+								className="workspace-filter-select"
+								onChange={(event) => {
+									const value = event.target
+										.value as ExportColumn;
+									if (value) {
+										setExportSelection((current) => [
+											...current,
+											value,
+										]);
+									}
+									event.target.value = "";
+								}}
+								value=""
+							>
+								<option value="">Add column...</option>
+								{EXPORT_COLUMNS.filter(
+									(column) =>
+										!exportSelection.includes(column),
+								).map((column) => (
+									<option key={column} value={column}>
+										{column}
+									</option>
+								))}
+							</select>
+						)}
+						<div className="modal-actions">
+							<Button
+								onClick={() => setIsExportOpen(false)}
+								size="sm"
+								type="button"
+								variant="outline"
+							>
+								Cancel
+							</Button>
+							<Button
+								disabled={exportSelection.length === 0}
+								onClick={() => void exportCsv()}
+								size="sm"
+							>
+								<Download />
+								Export
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{inspectingEvaluation && (
 				<div
 					{...overlayBackdrop({
@@ -1398,9 +1583,15 @@ type ResultsTabProps = {
 	visibleEvaluations: Evaluation[];
 	evaluationQuery: string;
 	eligibilityFilter: EligibilityFilter;
+	outcomeFilter: OutcomeFilter;
+	statusFilter: StatusFilter;
+	skillFilter: string;
 	minimumScoreText: string;
 	setEvaluationQuery: (value: string) => void;
 	setEligibilityFilter: (value: EligibilityFilter) => void;
+	setOutcomeFilter: (value: OutcomeFilter) => void;
+	setStatusFilter: (value: StatusFilter) => void;
+	setSkillFilter: (value: string) => void;
 	setMinimumScoreText: (value: string) => void;
 	exportCsv: () => void;
 	onQueue: () => void;
@@ -1412,9 +1603,15 @@ const ResultsTab = ({
 	visibleEvaluations,
 	evaluationQuery,
 	eligibilityFilter,
+	outcomeFilter,
+	statusFilter,
+	skillFilter,
 	minimumScoreText,
 	setEvaluationQuery,
 	setEligibilityFilter,
+	setOutcomeFilter,
+	setStatusFilter,
+	setSkillFilter,
 	setMinimumScoreText,
 	exportCsv,
 	onQueue,
@@ -1471,11 +1668,48 @@ const ResultsTab = ({
 						}
 						value={eligibilityFilter}
 					>
+						<option value="top">Top matches</option>
 						<option value="all">All outcomes</option>
 						<option value="eligible">Eligible</option>
 						<option value="needs_review">Needs review</option>
 						<option value="not_eligible">Not eligible</option>
 					</select>
+					<select
+						aria-label="Filter by requirement outcome"
+						className="workspace-filter-select"
+						onChange={(event) =>
+							setOutcomeFilter(
+								event.target.value as OutcomeFilter,
+							)
+						}
+						value={outcomeFilter}
+					>
+						<option value="all">Any requirement outcome</option>
+						<option value="met">Has met requirement</option>
+						<option value="partial">Has partial requirement</option>
+						<option value="not_met">Has unmet requirement</option>
+						<option value="unknown">Has unknown requirement</option>
+					</select>
+					<select
+						aria-label="Filter by processing state"
+						className="workspace-filter-select"
+						onChange={(event) =>
+							setStatusFilter(event.target.value as StatusFilter)
+						}
+						value={statusFilter}
+					>
+						<option value="all">Any processing state</option>
+						<option value="pending">Pending</option>
+						<option value="processing">Processing</option>
+						<option value="complete">Complete</option>
+						<option value="failed">Failed</option>
+					</select>
+					<Input
+						aria-label="Filter by skill"
+						onChange={(event) => setSkillFilter(event.target.value)}
+						placeholder="Skill..."
+						value={skillFilter}
+					/>
 					<label className="filter-minimum">
 						Min score
 						<input
@@ -1504,6 +1738,7 @@ const ResultsTab = ({
 							<th scope="col">Candidate</th>
 							<th scope="col">Score</th>
 							<th scope="col">Eligibility</th>
+							<th scope="col">Hard gates</th>
 							<th scope="col">Evidence coverage</th>
 							<th scope="col">Data quality</th>
 							<th scope="col">
@@ -1564,6 +1799,11 @@ const ResultsTab = ({
 									</span>
 								</td>
 								<td>
+									<HardGateSummary
+										gates={evaluation.hardGates ?? []}
+									/>
+								</td>
+								<td>
 									{evaluation.coverage !== null ? (
 										<span className="coverage-cell">
 											<span
@@ -1615,7 +1855,7 @@ const ResultsTab = ({
 						))}
 						{visibleEvaluations.length === 0 && (
 							<tr>
-								<td colSpan={6}>
+								<td colSpan={7}>
 									{evaluations.length === 0 ? (
 										<div className="empty-state">
 											<FileText aria-hidden />
@@ -1873,6 +2113,39 @@ const UploadTab = ({
 	</div>
 );
 
+const HardGateSummary = ({
+	gates,
+}: {
+	gates: Array<{ requirement: string; outcome: string }>;
+}) => {
+	if (gates.length === 0) {
+		return <span className="muted-copy">—</span>;
+	}
+	const failed = gates.filter((gate) => gate.outcome === "not_met").length;
+	const attention = gates.filter(
+		(gate) => gate.outcome === "partial" || gate.outcome === "unknown",
+	).length;
+	if (failed > 0) {
+		return (
+			<span className="gate-chip gate-failed">
+				{failed} gate{failed === 1 ? "" : "s"} failed
+			</span>
+		);
+	}
+	if (attention > 0) {
+		return (
+			<span className="gate-chip gate-review">
+				{attention} need{attention === 1 ? "s" : ""} review
+			</span>
+		);
+	}
+	return (
+		<span className="gate-chip gate-met">
+			{gates.length} gate{gates.length === 1 ? "" : "s"} met
+		</span>
+	);
+};
+
 const EvidenceDrawer = ({
 	evaluation,
 	onClose,
@@ -1940,6 +2213,20 @@ const EvidenceDrawer = ({
 			</section>
 		)}
 
+		{(evaluation.hardGates?.length ?? 0) > 0 && (
+			<section className="drawer-quality" aria-labelledby="gates-title">
+				<h3 id="gates-title">Hard gates</h3>
+				<ul>
+					{evaluation.hardGates?.map((gate) => (
+						<li key={gate.requirement}>
+							{gate.requirement} —{" "}
+							{gate.outcome.replace(/_/g, " ")}
+						</li>
+					))}
+				</ul>
+			</section>
+		)}
+
 		{(evaluation.assessments ?? []).length === 0 ? (
 			<p className="muted-copy">
 				Evaluations appear here once processing completes.
@@ -1953,6 +2240,16 @@ const EvidenceDrawer = ({
 							{assessment.outcome.replace(/_/g, " ")}
 						</span>
 					</div>
+					{(assessment.kind === "hard_gate" ||
+						assessment.contribution != null) && (
+						<p className="assessment-weight">
+							{assessment.kind === "hard_gate"
+								? "Hard gate, excluded from the score"
+								: `Weight ${assessment.weight ?? 1} · ${
+										assessment.contribution
+									}% of the score`}
+						</p>
+					)}
 					<p className="assessment-reasoning">
 						{assessment.reasoning}
 					</p>

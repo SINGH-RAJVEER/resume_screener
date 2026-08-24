@@ -100,13 +100,25 @@ export interface Evaluation {
 		characterCount?: number;
 		nonWhitespaceCharacterCount?: number;
 	};
+	skills?: string[];
+	hardGates?: Array<{ requirement: string; outcome: string }>;
 	assessments: Array<{
 		requirement: string;
 		outcome: "met" | "partial" | "not_met" | "unknown";
+		kind?: string;
+		weight?: number;
+		contribution?: number | null;
 		reasoning: string;
 		evidence: Array<{ blockId: string; quote: string }>;
 		semanticEvidence?: {
 			model: string;
+			matches: Array<{
+				blockId: string;
+				similarity: number;
+				text?: string;
+			}>;
+		} | null;
+		lexicalEvidence?: {
 			matches: Array<{
 				blockId: string;
 				similarity: number;
@@ -119,7 +131,26 @@ export interface Evaluation {
 export interface EvaluationFilters {
 	eligibility?: Evaluation["eligibility"][];
 	minimumScore?: number;
+	minimumCoverage?: number;
+	status?: string[];
+	outcome?: string[];
+	search?: string;
+	skill?: string;
 }
+
+export const EXPORT_COLUMNS = [
+	"candidate_name",
+	"candidate_email",
+	"candidate_location",
+	"status",
+	"score",
+	"eligibility",
+	"evidence_coverage",
+	"quality_state",
+	"quality_warnings",
+] as const;
+
+export type ExportColumn = (typeof EXPORT_COLUMNS)[number];
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 	const response = await fetch(`${baseURL}${path}`, {
@@ -155,15 +186,41 @@ export const workspaceClient = {
 		for (const value of filters.eligibility ?? []) {
 			params.append("eligibility", value);
 		}
+		for (const value of filters.status ?? []) {
+			params.append("status", value);
+		}
+		for (const value of filters.outcome ?? []) {
+			params.append("outcome", value);
+		}
 		if (filters.minimumScore !== undefined) {
 			params.set("minimum_score", String(filters.minimumScore));
+		}
+		if (filters.minimumCoverage !== undefined) {
+			params.set("minimum_coverage", String(filters.minimumCoverage));
+		}
+		if (filters.search?.trim()) {
+			params.set("search", filters.search.trim());
+		}
+		if (filters.skill?.trim()) {
+			params.set("skill", filters.skill.trim());
 		}
 		const query = params.size ? `?${params.toString()}` : "";
 		return request<Evaluation[]>(`/api/jobs/${jobId}/evaluations${query}`);
 	},
-	exportEvaluationsCsv: async (jobId: string) => {
+	exportEvaluationsCsv: async (
+		jobId: string,
+		exportOptions: { columns?: ExportColumn[]; labels?: string[] } = {},
+	) => {
+		const params = new URLSearchParams();
+		for (const column of exportOptions.columns ?? []) {
+			params.append("columns", column);
+		}
+		for (const label of exportOptions.labels ?? []) {
+			params.append("labels", label);
+		}
+		const query = params.size ? `?${params.toString()}` : "";
 		const response = await fetch(
-			`${baseURL}/api/jobs/${jobId}/evaluations.csv`,
+			`${baseURL}/api/jobs/${jobId}/evaluations.csv${query}`,
 			{
 				headers: {
 					Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
