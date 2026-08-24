@@ -46,7 +46,7 @@ def test_model_cannot_erase_deterministic_evidence() -> None:
 		model_outcome("not_met"),
 		[requirement()],
 	)
-	assert refined[0].outcome == "partial"
+	assert refined[0].outcome == "met"
 
 
 def test_unsupported_confirmation_degrades_to_unknown() -> None:

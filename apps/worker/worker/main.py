@@ -594,7 +594,13 @@ class Worker:
 			requirement_list = [dict(requirement) for requirement in requirements.mappings()]
 			outcome = evaluate(dict(evaluation["normalized_facts"] or {}), requirement_list)
 			assessments: Sequence[Assessment] = outcome.assessments
-			if self._openrouter is not None and requirement_list:
+			assessable_requirements = [
+				requirement
+				for requirement in requirement_list
+				if requirement.get("assessability") == "resume_evidence"
+				and requirement.get("kind") != "ignored"
+			]
+			if self._openrouter is not None and assessable_requirements:
 				extraction_blocks = cast(
 					Mapping[str, object],
 					cast(object, evaluation["extraction_blocks"]) or {},
@@ -604,7 +610,7 @@ class Worker:
 					model_assessments = await assess_requirements(
 						self._openrouter,
 						model=self._settings.openrouter.assessment_model,
-						requirements=requirement_list,
+						requirements=assessable_requirements,
 						blocks=blocks,
 						max_output_tokens=self._settings.openrouter.max_output_tokens,
 					)

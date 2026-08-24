@@ -108,7 +108,7 @@ def refine_assessments(
 		outcome = str(model.get("outcome", "unknown"))
 		if assessment.outcome == "met" and outcome != "met":
 			# Deterministic evidence proves the claim; a model cannot erase it.
-			outcome = "partial" if outcome == "not_met" else assessment.outcome
+			outcome = assessment.outcome
 		reasoning = str(model.get("reasoning", "")) or assessment.reasoning
 		evidence = [
 			cast(dict[str, str], entry)
@@ -134,6 +134,27 @@ def assess_requirement(
 	skills: Mapping[str, list[str]],
 	facts: Mapping[str, Any] | None = None,
 ) -> Assessment:
+	if str(requirement.get("assessability", "resume_evidence")) != "resume_evidence":
+		return Assessment(
+			str(requirement["id"]),
+			"unknown",
+			0,
+			"This requirement cannot be assessed from resume evidence.",
+			[],
+		)
+	predicate = requirement.get("predicate")
+	predicate_map: Mapping[str, object]
+	if isinstance(predicate, Mapping):
+		predicate_map = cast(Mapping[str, object], predicate)
+	else:
+		predicate_map = {}
+	if predicate_map.get("criteria"):
+		return assess_predicate(
+			str(requirement["id"]),
+			predicate_map,
+			skills,
+			facts or {},
+		)
 	text = str(requirement["normalized_text"])
 	required_skills = mentioned_skills(text)
 	if required_skills:
@@ -166,6 +187,127 @@ def assess_requirement(
 	)
 
 
+def assess_predicate(
+	requirement_id: str,
+	predicate: Mapping[str, object],
+	skills: Mapping[str, list[str]],
+	facts: Mapping[str, Any],
+) -> Assessment:
+	raw_criteria = predicate.get("criteria")
+	if not isinstance(raw_criteria, list) or not raw_criteria:
+		return Assessment(requirement_id, "unknown", 0, "Requirement predicate is invalid.", [])
+	criteria = [
+		assess_criterion(requirement_id, cast(Mapping[str, object], criterion), skills, facts)
+		for criterion in cast(list[object], raw_criteria)
+		if isinstance(criterion, Mapping)
+	]
+	if not criteria:
+		return Assessment(requirement_id, "unknown", 0, "Requirement predicate is invalid.", [])
+	operator = str(predicate.get("operator", "all_of"))
+	return combine_criterion_assessments(requirement_id, operator, criteria)
+
+
+def assess_criterion(
+	requirement_id: str,
+	criterion: Mapping[str, object],
+	skills: Mapping[str, list[str]],
+	facts: Mapping[str, Any],
+) -> Assessment:
+	criterion_type = str(criterion.get("type", "other"))
+	if criterion_type == "skill":
+		name = str(criterion.get("canonicalName") or "").strip()
+		block_ids = skills.get(name, [])
+		if block_ids:
+			return Assessment(
+				requirement_id,
+				"met",
+				1,
+				f"Documented evidence names {name}.",
+				[{"blockId": block_id, "quote": name} for block_id in block_ids],
+			)
+		return Assessment(
+			requirement_id,
+			"unknown",
+			0,
+			f"The resume does not establish whether the candidate has {name} experience.",
+			[],
+		)
+	if criterion_type == "experience":
+		subjects = criterion.get("subjects")
+		if isinstance(subjects, list) and subjects:
+			return Assessment(
+				requirement_id,
+				"unknown",
+				0,
+				"The resume does not establish a dated duration for the required subject.",
+				[],
+			)
+		minimum_months = criterion.get("minimumMonths")
+		if not isinstance(minimum_months, int):
+			return Assessment(
+				requirement_id,
+				"unknown",
+				0,
+				"Experience threshold is invalid.",
+				[],
+			)
+		return assess_experience_months(requirement_id, minimum_months, facts)
+	if criterion_type == "education":
+		level = str(criterion.get("minimumLevel") or "").strip()
+		return assess_education_criterion(requirement_id, level, facts)
+	if criterion_type == "certification":
+		name = str(criterion.get("canonicalName") or "").strip()
+		return assess_certification_criterion(requirement_id, name, facts)
+	return Assessment(
+		requirement_id,
+		"unknown",
+		0,
+		"This criterion needs evidence review.",
+		[],
+	)
+
+
+def combine_criterion_assessments(
+	requirement_id: str,
+	operator: str,
+	criteria: Sequence[Assessment],
+) -> Assessment:
+	outcomes = [criterion.outcome for criterion in criteria]
+	evidence = [item for criterion in criteria for item in criterion.evidence]
+	if operator == "any_of":
+		if "met" in outcomes:
+			outcome = "met"
+		elif "partial" in outcomes:
+			outcome = "partial"
+		elif outcomes and all(value == "not_met" for value in outcomes):
+			outcome = "not_met"
+		else:
+			outcome = "unknown"
+		reasoning = (
+			"At least one allowed path is documented."
+			if outcome == "met"
+			else "No allowed path can be established from the resume."
+		)
+	else:
+		if outcomes and all(value == "met" for value in outcomes):
+			outcome = "met"
+		elif "not_met" in outcomes:
+			outcome = "not_met"
+		elif any(value in {"met", "partial"} for value in outcomes):
+			outcome = "partial"
+		else:
+			outcome = "unknown"
+		reasoning = (
+			"All required parts are documented."
+			if outcome == "met"
+			else "Only part of the requirement is documented."
+			if outcome == "partial"
+			else "The complete requirement cannot be established from the resume."
+		)
+	confidence = min((criterion.confidence for criterion in criteria), default=0)
+	return Assessment(requirement_id, outcome, confidence, reasoning, evidence)
+
+
 def assess_skills(
 	requirement_id: str,
 	text: str,
@@ -192,9 +334,9 @@ def assess_skills(
 		)
 	return Assessment(
 		requirement_id,
-		"not_met",
-		1,
-		"Explicit required skill is not documented.",
+		"unknown",
+		0,
+		"The resume does not establish whether the required skill is held.",
 		[],
 	)
 
@@ -202,27 +344,33 @@ def assess_skills(
 def assess_experience(
 	requirement_id: str, needed_years: int, facts: Mapping[str, Any]
 ) -> Assessment:
+	return assess_experience_months(requirement_id, needed_years * 12, facts)
+
+
+def assess_experience_months(
+	requirement_id: str, needed_months: int, facts: Mapping[str, Any]
+) -> Assessment:
 	total_months = employment_months(facts.get("employment"))
 	if total_months is None:
 		return Assessment(
 			requirement_id,
 			"unknown",
 			0,
-			"No dated employment documented to compute experience.",
+			"No dated employment is documented to compute experience.",
 			[],
 		)
-	needed_months = needed_years * 12
 	if total_months >= needed_months:
 		outcome = "met"
 	elif total_months >= needed_months // 2:
 		outcome = "partial"
 	else:
-		outcome = "not_met"
+		outcome = "unknown"
 	years_text = f"{total_months // 12}y {total_months % 12}m"
+	needed_years = needed_months / 12
 	reasoning = (
-		f"Dated employment totals {years_text} against {needed_years} years required."
+		f"Documented employment totals {years_text} against {needed_years:g} years required."
 	)
-	return Assessment(requirement_id, outcome, 1, reasoning, [])
+	return Assessment(requirement_id, outcome, 1 if outcome != "unknown" else 0, reasoning, [])
 
 
 def employment_months(entries: object) -> int | None:
@@ -325,6 +473,90 @@ def find_education_level(
 			)
 		return "not_met", "No matching education level is documented."
 	return "met", "A degree is documented."
+
+
+def assess_education_criterion(
+	requirement_id: str,
+	minimum_level: str,
+	facts: Mapping[str, Any],
+) -> Assessment:
+	ranks = {"bachelor": 1, "master": 2, "doctorate": 3}
+	requested_rank = ranks.get(minimum_level)
+	if requested_rank is None:
+		return Assessment(requirement_id, "unknown", 0, "Education level is unclear.", [])
+	documented = documented_education_levels(facts)
+	if not documented:
+		return Assessment(
+			requirement_id,
+			"unknown",
+			0,
+			"No education level is documented.",
+			[],
+		)
+	if max(ranks[level] for level in documented) >= requested_rank:
+		return Assessment(
+			requirement_id,
+			"met",
+			1,
+			"Documented education meets or exceeds the requested level.",
+			[],
+		)
+	return Assessment(
+		requirement_id,
+		"partial",
+		1,
+		"Education is documented below the requested level.",
+		[],
+	)
+
+
+def documented_education_levels(facts: Mapping[str, Any]) -> set[str]:
+	education = facts.get("education")
+	if not isinstance(education, list):
+		return set()
+	levels: set[str] = set()
+	for item in cast(list[object], education):
+		if not isinstance(item, Mapping):
+			continue
+		degree = str(cast(Mapping[str, object], item).get("degree") or "").casefold()
+		for level, words in EDUCATION_LEVELS.items():
+			if any(word in degree for word in words):
+				levels.add(level)
+	return levels
+
+
+def assess_certification_criterion(
+	requirement_id: str,
+	name: str,
+	facts: Mapping[str, Any],
+) -> Assessment:
+	certifications = facts.get("certifications")
+	if not isinstance(certifications, list):
+		return Assessment(requirement_id, "unknown", 0, "No certifications are documented.", [])
+	normalized_name = normalize_credential_name(name)
+	for item in cast(list[object], certifications):
+		if not isinstance(item, Mapping):
+			continue
+		documented_name = str(cast(Mapping[str, object], item).get("name") or "")
+		if normalized_name and normalize_credential_name(documented_name) == normalized_name:
+			return Assessment(
+				requirement_id,
+				"met",
+				1,
+				"The required certification is documented.",
+				[{"blockId": "facts", "quote": documented_name}],
+			)
+	return Assessment(
+		requirement_id,
+		"unknown",
+		0,
+		"The resume does not establish whether the certification is held.",
+		[],
+	)
+
+
+def normalize_credential_name(value: str) -> str:
+	return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
 def outcome_value(outcome: str) -> float:

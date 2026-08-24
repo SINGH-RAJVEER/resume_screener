@@ -27,4 +27,6 @@ the approved aliases say so.
 - Cite evidence as a block ID from the supplied blocks plus an exact quote.
 - When evidence is absent or ambiguous, return outcome "unknown" instead of \
 guessing. Missing data is not a failure.
+- Return "not_met" only when cited evidence directly contradicts the \
+requirement or complete dated evidence proves a numeric threshold is not met.
 """
