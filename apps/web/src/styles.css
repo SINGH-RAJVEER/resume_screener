@@ -133,6 +133,10 @@ p {
 .public-hero p {
 	color: var(--muted);
 }
+.hero-copy {
+	margin: 2rem 0 2.5rem;
+	max-width: 36rem;
+}
 .public-actions {
 	display: flex;
 	gap: 0.5rem;

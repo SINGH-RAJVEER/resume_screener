@@ -51,7 +51,7 @@ export const Landing = () => (
 		<section className="public-hero">
 			<p className="eyebrow">Evidence-backed screening</p>
 			<h1>Resume evaluation with evidence.</h1>
-			<p>
+			<p className="hero-copy">
 				Scores are only as good as their proof. Every evaluation quotes
 				the lines of the resume that earned it, against requirements you
 				confirmed.
