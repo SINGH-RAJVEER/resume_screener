@@ -702,6 +702,9 @@ async def job_detail(job_id: str, request: Request) -> dict[str, object]:
             "description": version.source_text,
             "confirmed": version.confirmed_at is not None,
             "draftStatus": draft_status,
+            "draftError": processing.safe_error
+            if processing is not None and processing.status == "dead"
+            else None,
             "draftQualityState": artifact.get("qualityState"),
             "draftWarnings": artifact.get("warnings", []),
             "draftDegraded": artifact.get("degraded", False),
@@ -1376,9 +1379,10 @@ async def list_evaluations(
             raise APIError(404, "NOT_FOUND", "Job not found")
         await require_membership(session, job.organization_id, user.id)
         statement = (
-            select(Evaluation, CandidateRecord)
+            select(Evaluation, CandidateRecord, ResumeVersion)
             .join(ResumeSubmission, ResumeSubmission.id == Evaluation.resume_submission_id)
             .join(CandidateRecord, CandidateRecord.id == ResumeSubmission.candidate_record_id)
+            .join(ResumeVersion, ResumeVersion.id == Evaluation.resume_version_id)
             .where(ResumeSubmission.job_id == job.id)
             .order_by(Evaluation.score.desc().nullslast(), Evaluation.created_at.desc())
         )
@@ -1388,7 +1392,7 @@ async def list_evaluations(
             statement = statement.where(Evaluation.score >= minimum_score)
         rows = await session.execute(statement.limit(limit))
         result: list[dict[str, object]] = []
-        for evaluation, candidate in rows:
+        for evaluation, candidate, version in rows:
             assessments = (
                 await session.execute(
                     select(RequirementAssessment, JobRequirement)
@@ -1407,6 +1411,7 @@ async def list_evaluations(
                     "score": evaluation.score,
                     "coverage": evaluation.evidence_coverage,
                     "eligibility": evaluation.eligibility,
+                    **resume_quality_payload(version),
                     "assessments": [
                         assessment_payload(assessment, requirement, block_texts)
                         for assessment, requirement in assessments
@@ -1430,6 +1435,35 @@ async def resume_block_texts(session: AsyncSession, version_id: str) -> dict[str
         if block_id:
             texts[str(block_id)] = str(entry.get("text", ""))
     return texts
+
+
+def resume_quality_payload(version: ResumeVersion) -> dict[str, object]:
+    artifact = version.extraction_blocks if isinstance(version.extraction_blocks, dict) else {}
+    metadata = artifact.get("metadata")
+    safe_metadata: dict[str, object] = {}
+    if isinstance(metadata, dict):
+        for key in (
+            "mediaType",
+            "pageCount",
+            "blockCount",
+            "characterCount",
+            "nonWhitespaceCharacterCount",
+        ):
+            value = cast(dict[str, object], metadata).get(key)
+            if isinstance(value, (str, int)):
+                safe_metadata[key] = value
+    normalized = version.normalized_facts if isinstance(version.normalized_facts, dict) else {}
+    warnings = normalized.get("warnings")
+    quality = artifact.get("quality")
+    if not isinstance(warnings, list) and isinstance(quality, dict):
+        warnings = cast(dict[str, object], quality).get("warnings")
+    raw_warnings = cast(list[object], warnings) if isinstance(warnings, list) else []
+    safe_warnings = [warning for warning in raw_warnings if isinstance(warning, str)]
+    return {
+        "qualityState": version.quality_state,
+        "qualityWarnings": list(dict.fromkeys(safe_warnings)),
+        "extractionMetadata": safe_metadata,
+    }
 
 
 def assessment_payload(
@@ -1465,16 +1499,28 @@ async def export_evaluations_csv(job_id: str, request: Request) -> Response:
             raise APIError(404, "NOT_FOUND", "Job not found")
         await require_membership(session, job.organization_id, user.id)
         rows = await session.execute(
-            select(Evaluation, CandidateRecord)
+            select(Evaluation, CandidateRecord, ResumeVersion)
             .join(ResumeSubmission, ResumeSubmission.id == Evaluation.resume_submission_id)
             .join(CandidateRecord, CandidateRecord.id == ResumeSubmission.candidate_record_id)
+            .join(ResumeVersion, ResumeVersion.id == Evaluation.resume_version_id)
             .where(ResumeSubmission.job_id == job.id)
             .order_by(Evaluation.score.desc().nullslast(), Evaluation.created_at.desc())
         )
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["candidate_name", "status", "score", "eligibility", "evidence_coverage"])
-        for evaluation, candidate in rows:
+        writer.writerow(
+            [
+                "candidate_name",
+                "status",
+                "score",
+                "eligibility",
+                "evidence_coverage",
+                "quality_state",
+                "quality_warnings",
+            ]
+        )
+        for evaluation, candidate, version in rows:
+            quality = resume_quality_payload(version)
             writer.writerow(
                 [
                     candidate.full_name or "",
@@ -1486,6 +1532,8 @@ async def export_evaluations_csv(job_id: str, request: Request) -> Response:
                         if evaluation.evidence_coverage is not None
                         else ""
                     ),
+                    quality["qualityState"],
+                    "; ".join(cast(list[str], quality["qualityWarnings"])),
                 ]
             )
     return Response(

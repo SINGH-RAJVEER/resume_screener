@@ -200,6 +200,10 @@ class ResumeDocument(Base):
 class ResumeVersion(Base):
     __tablename__ = "resume_version"
     __table_args__ = (
+		CheckConstraint(
+			"quality_state IN ('pending', 'ready', 'review_required', 'failed')",
+			name="ck_resume_version_quality_state",
+		),
         ForeignKeyConstraint(
             ["organization_id", "resume_document_id"],
             ["resume_document.organization_id", "resume_document.id"],
@@ -464,6 +468,10 @@ class Evaluation(Base):
 		CheckConstraint(
 			"evidence_coverage IS NULL OR evidence_coverage BETWEEN 0 AND 100",
 			name="ck_evaluation_evidence_coverage",
+		),
+		CheckConstraint(
+			"quality_state IN ('pending', 'ready', 'review_required', 'failed')",
+			name="ck_evaluation_quality_state",
 		),
         UniqueConstraint(
 			"batch_evaluation_id",

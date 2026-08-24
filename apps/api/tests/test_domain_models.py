@@ -26,6 +26,7 @@ def test_core_domain_tables_are_registered() -> None:
 
 def test_core_domain_invariants_are_database_constraints() -> None:
 	resume_document = Base.metadata.tables["resume_document"]
+	resume_version = Base.metadata.tables["resume_version"]
 	processing_job = Base.metadata.tables["processing_job"]
 	submission = Base.metadata.tables["resume_submission"]
 	point_account = Base.metadata.tables["point_account"]
@@ -38,6 +39,7 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 	review_decision = Base.metadata.tables["review_decision"]
 
 	assert constraint_names(resume_document, CheckConstraint) >= {"ck_resume_document_owner"}
+	assert constraint_names(resume_version, CheckConstraint) >= {"ck_resume_version_quality_state"}
 	assert constraint_names(processing_job, CheckConstraint) >= {
 		"ck_processing_job_attempt_count",
 		"ck_processing_job_maximum_attempts",
@@ -72,6 +74,7 @@ def test_core_domain_invariants_are_database_constraints() -> None:
 		"ck_evaluation_status",
 		"ck_evaluation_score",
 		"ck_evaluation_evidence_coverage",
+		"ck_evaluation_quality_state",
 	}
 	assert constraint_names(evaluation, UniqueConstraint) >= {
 		"uq_evaluation_batch_submission",
