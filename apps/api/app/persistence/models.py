@@ -506,18 +506,69 @@ class IndependentEvaluation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class PointLedgerEntry(Base):
-    __tablename__ = "point_ledger_entry"
-    __table_args__ = (
-        CheckConstraint("amount <> 0", name="ck_point_ledger_entry_nonzero_amount"),
-        UniqueConstraint("user_id", "idempotency_key", name="uq_point_ledger_entry_idempotency"),
-    )
+class PointAccount(Base):
+	__tablename__ = "point_account"
+	__table_args__ = (
+		CheckConstraint(
+			"(owner_user_id IS NOT NULL) <> (organization_id IS NOT NULL)",
+			name="ck_point_account_owner",
+		),
+		UniqueConstraint("owner_user_id", name="uq_point_account_user"),
+		UniqueConstraint("organization_id", name="uq_point_account_organization"),
+	)
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
-    amount: Mapped[int] = mapped_column(Integer, nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	owner_user_id: Mapped[str | None] = mapped_column(
+		ForeignKey("user.id", ondelete="CASCADE")
+	)
+	organization_id: Mapped[str | None] = mapped_column(
+		ForeignKey("organization.id", ondelete="CASCADE")
+	)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
+class PointLedgerEntry(Base):
+	__tablename__ = "point_ledger_entry"
+	__table_args__ = (
+		CheckConstraint("amount <> 0", name="ck_point_ledger_entry_nonzero_amount"),
+		UniqueConstraint("account_id", "idempotency_key", name="uq_point_ledger_entry_idempotency"),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	account_id: Mapped[str] = mapped_column(
+		ForeignKey("point_account.id", ondelete="CASCADE"), nullable=False
+	)
+	amount: Mapped[int] = mapped_column(Integer, nullable=False)
+	reason: Mapped[str] = mapped_column(Text, nullable=False)
+	idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
+class PointReservation(Base):
+	__tablename__ = "point_reservation"
+	__table_args__ = (
+		CheckConstraint("amount > 0", name="ck_point_reservation_positive_amount"),
+		CheckConstraint(
+			"state IN ('reserved', 'settled', 'released')", name="ck_point_reservation_state"
+		),
+		UniqueConstraint("account_id", "idempotency_key", name="uq_point_reservation_idempotency"),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	account_id: Mapped[str] = mapped_column(
+		ForeignKey("point_account.id", ondelete="CASCADE"), nullable=False
+	)
+	amount: Mapped[int] = mapped_column(Integer, nullable=False)
+	state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'reserved'"))
+	purpose: Mapped[str] = mapped_column(Text, nullable=False)
+	idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
