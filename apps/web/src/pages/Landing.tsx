@@ -22,7 +22,7 @@ const FLOW_STEPS = [
 const AUDIENCES = [
 	{
 		name: "Candidate",
-		headline: "Evaluate your own resume first.",
+		headline: "Evaluate your own resume.",
 		copy: "Run independent evaluations against any job description and get an evidence-backed report that stays private to you.",
 		cta: "Create a candidate account",
 		to: "/sign-up?mode=candidate",
