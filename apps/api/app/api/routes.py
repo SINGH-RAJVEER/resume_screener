@@ -1271,7 +1271,6 @@ async def independent_evaluation_detail(evaluation_id: str, request: Request) ->
         evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
         return {
             **independent_evaluation_summary(evaluation),
-            "jobDescriptionProvided": evaluation.job_description is not None,
             "suggestions": evaluation.suggestions or [],
             "facts": evaluation.normalized_facts or {},
             "hasImprovedResume": bool(evaluation.improved_resume_key),
@@ -1302,9 +1301,9 @@ async def delete_independent_evaluation(evaluation_id: str, request: Request) ->
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
-        LocalObjectStorage(Path(request.app.state.settings.storage_root)).delete(
-            evaluation.storage_key
-        )
+        storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
+        for storage_key in independent_evaluation_storage_keys(evaluation):
+            storage.delete(storage_key)
         await session.delete(evaluation)
 
 
@@ -1520,9 +1519,24 @@ def independent_evaluation_summary(evaluation: IndependentEvaluation) -> dict[st
         "status": evaluation.status,
         "score": evaluation.score,
         "safeError": evaluation.safe_error,
+        "jobDescriptionProvided": bool(
+            evaluation.job_description or evaluation.job_description_key
+        ),
         "createdAt": evaluation.created_at.isoformat(),
         "completedAt": evaluation.completed_at.isoformat() if evaluation.completed_at else None,
     }
+
+
+def independent_evaluation_storage_keys(evaluation: IndependentEvaluation) -> list[str]:
+    return [
+        key
+        for key in (
+            evaluation.storage_key,
+            evaluation.job_description_key,
+            evaluation.improved_resume_key,
+        )
+        if key
+    ]
 
 
 async def owned_independent_evaluation(

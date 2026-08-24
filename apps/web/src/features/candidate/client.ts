@@ -59,6 +59,10 @@ export const candidateClient = {
 	},
 	independentEvaluations: () =>
 		request<IndependentEvaluation[]>("/api/independent-evaluations"),
+	deleteIndependentEvaluation: (evaluationId: string) =>
+		request<void>(`/api/independent-evaluations/${evaluationId}`, {
+			method: "DELETE",
+		}),
 	redeemInvitation: (token: string) =>
 		request<{ jobId: string; invitationId: string }>(
 			`/api/invitations/${token}/redeem`,
@@ -76,7 +80,11 @@ export const candidateClient = {
 		const body = new FormData();
 		body.append("file", file);
 		body.append("invitation_token", token);
-		return request<{ processingJobId: string; submissionId: string }>(
+		return request<{
+			processingJobId: string;
+			submissionId: string;
+			evaluationId: string;
+		}>(
 			`/api/jobs/${jobId}/resumes`,
 			{ method: "POST", body },
 		);
