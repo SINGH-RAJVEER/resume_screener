@@ -286,6 +286,15 @@ async def create_organization(input_data: OrganizationRequest, request: Request)
         id=new_id(), organization_id=organization.id, user_id=user.id, role="owner"
     )
     async with store.sessions().begin() as session:
+        existing = (
+            await session.execute(
+                select(OrganizationMember.id).where(OrganizationMember.user_id == user.id)
+            )
+        ).first()
+        if existing is not None:
+            raise APIError(
+                409, "ALREADY_MEMBER", "Employer users can belong to only one organization"
+            )
         # Models declare no relationships, so flush parents before children to
         # guarantee insert order satisfies foreign keys.
         session.add(organization)
@@ -344,6 +353,16 @@ async def add_organization_member(
         ).scalar_one_or_none()
         if existing is not None:
             raise APIError(409, "MEMBER_EXISTS", "User is already a member")
+        elsewhere = (
+            await session.execute(
+                select(OrganizationMember.organization_id).where(
+                    OrganizationMember.user_id == member_user.id,
+                    OrganizationMember.organization_id != organization_id,
+                )
+            )
+        ).first()
+        if elsewhere is not None:
+            raise APIError(409, "ALREADY_MEMBER", "User already belongs to another organization")
         member = OrganizationMember(
             id=new_id(),
             organization_id=organization_id,
@@ -461,12 +480,8 @@ async def add_join_policy_domain(
     return {"domain": rule.domain}
 
 
-@router.delete(
-    "/api/organizations/{organization_id}/join-policy/domains/{domain}", status_code=204
-)
-async def remove_join_policy_domain(
-    organization_id: str, domain: str, request: Request
-) -> None:
+@router.delete("/api/organizations/{organization_id}/join-policy/domains/{domain}", status_code=204)
+async def remove_join_policy_domain(organization_id: str, domain: str, request: Request) -> None:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
@@ -513,9 +528,7 @@ async def add_join_policy_email(
 
 
 @router.delete("/api/organizations/{organization_id}/join-policy/emails/{email}", status_code=204)
-async def remove_join_policy_email(
-    organization_id: str, email: str, request: Request
-) -> None:
+async def remove_join_policy_email(organization_id: str, email: str, request: Request) -> None:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
@@ -1120,38 +1133,36 @@ async def list_independent_evaluations(request: Request) -> list[dict[str, objec
 
 
 @router.get("/api/independent-evaluations/{evaluation_id}")
-async def independent_evaluation_detail(
-	evaluation_id: str, request: Request
-) -> dict[str, object]:
-	user = await require_candidate(request)
-	store = require_sqlalchemy_store(request)
-	async with store.sessions()() as session:
-		evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
-		return {
-			**independent_evaluation_summary(evaluation),
-			"jobDescriptionProvided": evaluation.job_description is not None,
-			"suggestions": evaluation.suggestions or [],
-			"facts": evaluation.normalized_facts or {},
-			"hasImprovedResume": bool(evaluation.improved_resume_key),
-		}
+async def independent_evaluation_detail(evaluation_id: str, request: Request) -> dict[str, object]:
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions()() as session:
+        evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+        return {
+            **independent_evaluation_summary(evaluation),
+            "jobDescriptionProvided": evaluation.job_description is not None,
+            "suggestions": evaluation.suggestions or [],
+            "facts": evaluation.normalized_facts or {},
+            "hasImprovedResume": bool(evaluation.improved_resume_key),
+        }
 
 
 @router.get("/api/independent-evaluations/{evaluation_id}/improved-resume")
 async def download_improved_resume(evaluation_id: str, request: Request) -> Response:
-	user = await require_candidate(request)
-	store = require_sqlalchemy_store(request)
-	async with store.sessions().begin() as session:
-		evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
-	if not evaluation.improved_resume_key or not evaluation.improved_resume_unlocked_at:
-		raise APIError(404, "NOT_FOUND", "Corrected resume is not available")
-	content = LocalObjectStorage(Path(request.app.state.settings.storage_root)).get(
-		evaluation.improved_resume_key
-	)
-	return Response(
-		content=content,
-		media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		headers={"Content-Disposition": 'attachment; filename="corrected-resume.docx"'},
-	)
+    user = await require_candidate(request)
+    store = require_sqlalchemy_store(request)
+    async with store.sessions().begin() as session:
+        evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+    if not evaluation.improved_resume_key or not evaluation.improved_resume_unlocked_at:
+        raise APIError(404, "NOT_FOUND", "Corrected resume is not available")
+    content = LocalObjectStorage(Path(request.app.state.settings.storage_root)).get(
+        evaluation.improved_resume_key
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="corrected-resume.docx"'},
+    )
 
 
 @router.delete("/api/independent-evaluations/{evaluation_id}", status_code=204)
@@ -1160,7 +1171,9 @@ async def delete_independent_evaluation(evaluation_id: str, request: Request) ->
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
-        LocalObjectStorage(Path(request.app.state.settings.storage_root)).delete(evaluation.storage_key)
+        LocalObjectStorage(Path(request.app.state.settings.storage_root)).delete(
+            evaluation.storage_key
+        )
         await session.delete(evaluation)
 
 
@@ -1252,9 +1265,7 @@ async def list_evaluations(
                     "coverage": evaluation.evidence_coverage,
                     "eligibility": evaluation.eligibility,
                     "assessments": [
-                        assessment_payload(
-                            assessment, requirement, block_texts
-                        )
+                        assessment_payload(assessment, requirement, block_texts)
                         for assessment, requirement in assessments
                     ],
                 }
@@ -1262,9 +1273,7 @@ async def list_evaluations(
         return result
 
 
-async def resume_block_texts(
-    session: AsyncSession, version_id: str
-) -> dict[str, str]:
+async def resume_block_texts(session: AsyncSession, version_id: str) -> dict[str, str]:
     version = await session.get(ResumeVersion, version_id)
     extraction: dict[str, object] = dict(version.extraction_blocks or {}) if version else {}
     raw_blocks = extraction.get("blocks")

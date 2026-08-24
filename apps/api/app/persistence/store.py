@@ -1,4 +1,3 @@
-
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -147,10 +146,11 @@ class SQLAlchemyStore:
             organizations = (
                 (
                     await session.execute(
-                        select(Organization).where(
-                            Organization.id.in_(domain_org_ids)
-                            | Organization.id.in_(email_org_ids)
+                        select(Organization)
+                        .where(
+                            Organization.id.in_(domain_org_ids) | Organization.id.in_(email_org_ids)
                         )
+                        .order_by(Organization.created_at)
                     )
                 )
                 .scalars()
@@ -163,9 +163,10 @@ class SQLAlchemyStore:
                             OrganizationMember.user_id == user_id
                         )
                     )
-                )
-                .scalars()
+                ).scalars()
             )
+            # An employer user belongs to at most one organization, so only
+            # the first matching organization claims the registration.
             joined: list[JoinedOrganization] = []
             for organization in organizations:
                 if organization.id in joined_ids:
@@ -185,6 +186,7 @@ class SQLAlchemyStore:
                         role=organization.default_member_role,
                     )
                 )
+                break
             return joined
 
 

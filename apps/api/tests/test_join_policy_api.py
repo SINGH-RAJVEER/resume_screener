@@ -197,9 +197,7 @@ async def test_owner_adds_and_removes_a_domain_rule() -> None:
         assert added.status_code == 201
         assert added.json() == {"domain": "company.com"}
 
-        listed = await client.get(
-            "/api/organizations/org-1/join-policy", headers=headers_dict
-        )
+        listed = await client.get("/api/organizations/org-1/join-policy", headers=headers_dict)
         assert listed.json()["domains"] == ["company.com"]
 
         removed = await client.delete(
@@ -232,9 +230,7 @@ async def test_domain_rule_rejects_public_providers() -> None:
 async def test_a_domain_can_only_be_claimed_once() -> None:
     async with policy_client() as (client, store):
         await seed_organization(store)
-        await seed_organization(
-            store, owner_user_id="owner-2", organization_id="org-2"
-        )
+        await seed_organization(store, owner_user_id="owner-2", organization_id="org-2")
         first = await client.post(
             "/api/organizations/org-1/join-policy/domains",
             json={"domain": "company.com"},
@@ -335,3 +331,100 @@ async def test_signup_auto_joins_through_a_claimed_domain_in_a_real_store() -> N
 
     assert response.status_code == 201
     assert joined == [JoinedOrganization("org-1", "", "viewer")]
+
+
+async def test_signup_joins_only_the_first_matching_organization() -> None:
+    async with policy_client() as (client, store):
+        now = datetime.now(UTC)
+        async with store.sessions().begin() as session:
+            session.add(
+                User(
+                    id="owner-1",
+                    name="Owner",
+                    email="owner-1@company.com",
+                    account_type="employer",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                Organization(
+                    id="org-1",
+                    name="First",
+                    created_at=now - timedelta(days=2),
+                )
+            )
+            session.add(
+                Organization(
+                    id="org-2",
+                    name="Second",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            await session.flush()
+            session.add(
+                OrganizationMember(
+                    id="member-org-1",
+                    organization_id="org-1",
+                    user_id="owner-1",
+                    role="owner",
+                )
+            )
+            session.add(
+                OrganizationEmailDomain(
+                    id="rule-domain", organization_id="org-1", domain="company.com"
+                )
+            )
+            session.add(
+                OrganizationAllowedEmail(
+                    id="rule-email",
+                    organization_id="org-2",
+                    email="ada@company.com",
+                )
+            )
+        response = await client.post(
+            "/api/employer/auth/sign-up/email",
+            json={"name": "Ada", "email": "ada@company.com", "password": "password123"},
+        )
+        user_id = response.json()["user"]["id"]
+        joined = await memberships(store, user_id)
+
+    assert response.status_code == 201
+    assert joined == [JoinedOrganization("org-1", "", "viewer")]
+
+
+async def test_creating_a_second_organization_is_rejected() -> None:
+    async with policy_client() as (client, store):
+        await seed_organization(store)
+        response = await client.post(
+            "/api/organizations",
+            json={"name": "Second Company"},
+            headers=auth_headers(store, make_user("owner-1", "owner-1@company.com")),
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "ALREADY_MEMBER"
+
+
+async def test_adding_a_user_who_belongs_to_another_organization_is_rejected() -> None:
+    async with policy_client() as (client, store):
+        await seed_organization(store)
+        await seed_organization(store, owner_user_id="owner-2", organization_id="org-2")
+        await add_user(store, "outsider", "outsider@other.com")
+        org_2_owner = auth_headers(store, make_user("owner-2", "owner-2@company.com"))
+
+        joined = await client.post(
+            "/api/organizations/org-1/members",
+            json={"email": "outsider@other.com", "role": "recruiter"},
+            headers=auth_headers(store, make_user("owner-1", "owner-1@company.com")),
+        )
+        assert joined.status_code == 201
+
+        rejected = await client.post(
+            "/api/organizations/org-2/members",
+            json={"email": "outsider@other.com", "role": "viewer"},
+            headers=org_2_owner,
+        )
+
+    assert rejected.status_code == 409
+    assert rejected.json()["code"] == "ALREADY_MEMBER"
