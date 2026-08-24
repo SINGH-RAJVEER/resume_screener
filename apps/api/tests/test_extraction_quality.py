@@ -1,5 +1,20 @@
-from app.api.routes import resume_quality_payload
+from app.api.routes import csv_safe, resume_quality_payload
 from app.persistence.models import ResumeVersion
+
+
+def test_csv_cells_starting_with_formula_characters_are_neutralized() -> None:
+	assert csv_safe("=SUM(A1)") == "'=SUM(A1)"
+	assert csv_safe("+cmd") == "'+cmd"
+	assert csv_safe("-2; --") == "'-2; --"
+	assert csv_safe("@import") == "'@import"
+	assert csv_safe("\tSUM(A1)") == "'\tSUM(A1)"
+	assert csv_safe("\r=cmd") == "'\r=cmd"
+
+
+def test_csv_plain_cells_pass_through_unchanged() -> None:
+	assert csv_safe("Ada Lovelace") == "Ada Lovelace"
+	assert csv_safe(85) == "85"
+	assert csv_safe(None) == "None"
 
 
 def test_resume_quality_payload_exposes_state_warnings_and_safe_metadata() -> None:

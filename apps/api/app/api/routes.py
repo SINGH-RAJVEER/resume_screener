@@ -1490,6 +1490,15 @@ def assessment_payload(
 
 
 @router.get("/api/jobs/{job_id}/evaluations.csv")
+def csv_safe(value: object) -> str:
+	# Neutralizes spreadsheet formula injection for cells that begin with a
+	# formula, command, or whitespace-prefixed formula character.
+	text = str(value)
+	if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+		return f"'{text}"
+	return text
+
+
 async def export_evaluations_csv(job_id: str, request: Request) -> Response:
     user = await require_user(request)
     store = require_sqlalchemy_store(request)
@@ -1523,17 +1532,17 @@ async def export_evaluations_csv(job_id: str, request: Request) -> Response:
             quality = resume_quality_payload(version)
             writer.writerow(
                 [
-                    candidate.full_name or "",
-                    evaluation.status,
-                    evaluation.score if evaluation.score is not None else "",
-                    evaluation.eligibility,
-                    (
+                    csv_safe(candidate.full_name or ""),
+                    csv_safe(evaluation.status),
+                    csv_safe(evaluation.score if evaluation.score is not None else ""),
+                    csv_safe(evaluation.eligibility),
+                    csv_safe(
                         evaluation.evidence_coverage
                         if evaluation.evidence_coverage is not None
                         else ""
                     ),
-                    quality["qualityState"],
-                    "; ".join(cast(list[str], quality["qualityWarnings"])),
+                    csv_safe(quality["qualityState"]),
+                    csv_safe("; ".join(cast(list[str], quality["qualityWarnings"]))),
                 ]
             )
     return Response(
