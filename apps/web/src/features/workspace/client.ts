@@ -61,6 +61,7 @@ export interface JobDetail {
 	applicationOpensAt: string | null;
 	applicationClosesAt: string | null;
 	draftStatus: "processing" | "ready" | "failed";
+	draftError: string | null;
 	draftQualityState: "ready" | "review_required" | null;
 	draftWarnings: string[];
 	draftDegraded: boolean;
@@ -90,6 +91,15 @@ export interface Evaluation {
 	score: number | null;
 	coverage: number | null;
 	eligibility: "pending" | "eligible" | "needs_review" | "not_eligible";
+	qualityState?: "pending" | "ready" | "review_required" | "failed";
+	qualityWarnings?: string[];
+	extractionMetadata?: {
+		mediaType?: string;
+		pageCount?: number;
+		blockCount?: number;
+		characterCount?: number;
+		nonWhitespaceCharacterCount?: number;
+	};
 	assessments: Array<{
 		requirement: string;
 		outcome: "met" | "partial" | "not_met" | "unknown";

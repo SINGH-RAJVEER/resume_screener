@@ -922,6 +922,7 @@ export const Workspace = () => {
 										selectedJob.draftStatus !== "processing"
 									}
 									confirmed={selectedJob.confirmed}
+									draftError={selectedJob.draftError}
 									draftDegraded={selectedJob.draftDegraded}
 									draftStatus={selectedJob.draftStatus}
 									draftWarnings={selectedJob.draftWarnings}
@@ -1504,6 +1505,7 @@ const ResultsTab = ({
 							<th scope="col">Score</th>
 							<th scope="col">Eligibility</th>
 							<th scope="col">Evidence coverage</th>
+							<th scope="col">Data quality</th>
 							<th scope="col">
 								<span className="visually-hidden">Actions</span>
 							</th>
@@ -1531,7 +1533,13 @@ const ResultsTab = ({
 												/100
 											</span>
 										</span>
-									) : evaluation.status === "complete" ? (
+									) : evaluation.qualityState ===
+										"review_required" ? (
+										<span className="muted-copy">
+											Review required
+										</span>
+									) : evaluation.status === "complete" ||
+										evaluation.status === "failed" ? (
 										<span className="muted-copy">—</span>
 									) : (
 										<span className="pending-cell">
@@ -1575,6 +1583,25 @@ const ResultsTab = ({
 										"—"
 									)}
 								</td>
+								<td>
+									<span className="quality-cell">
+										{(
+											evaluation.qualityState ?? "pending"
+										).replace(/_/g, " ")}
+										{(evaluation.qualityWarnings?.length ??
+											0) > 0 && (
+											<small>
+												{evaluation.qualityWarnings
+													?.length ?? 0}{" "}
+												warning
+												{evaluation.qualityWarnings
+													?.length === 1
+													? ""
+													: "s"}
+											</small>
+										)}
+									</span>
+								</td>
 								<td className="cell-action">
 									<Button
 										onClick={() => onInspect(evaluation)}
@@ -1588,7 +1615,7 @@ const ResultsTab = ({
 						))}
 						{visibleEvaluations.length === 0 && (
 							<tr>
-								<td colSpan={5}>
+								<td colSpan={6}>
 									{evaluations.length === 0 ? (
 										<div className="empty-state">
 											<FileText aria-hidden />
@@ -1624,6 +1651,7 @@ type CriteriaTabProps = {
 	confirmed: boolean;
 	canConfirm: boolean;
 	draftStatus: JobDetail["draftStatus"];
+	draftError: string | null;
 	draftWarnings: string[];
 	draftDegraded: boolean;
 	onChange: (
@@ -1639,6 +1667,7 @@ const CriteriaTab = ({
 	confirmed,
 	canConfirm,
 	draftStatus,
+	draftError,
 	draftWarnings,
 	draftDegraded,
 	onChange,
@@ -1657,6 +1686,12 @@ const CriteriaTab = ({
 				<LoaderCircle aria-hidden className="spin" />
 				Compiling requirements and checking source evidence...
 			</div>
+		)}
+		{draftStatus === "failed" && (
+			<p className="criterion-warning" role="alert">
+				{draftError ??
+					"The job description could not be processed. Upload a clearer digital document."}
+			</p>
 		)}
 		{draftDegraded && (
 			<p className="criterion-warning">
@@ -1883,6 +1918,27 @@ const EvidenceDrawer = ({
 				<X />
 			</button>
 		</header>
+
+		{(evaluation.qualityWarnings?.length ?? 0) > 0 && (
+			<section className="drawer-quality" aria-labelledby="quality-title">
+				<h3 id="quality-title">Data quality</h3>
+				<ul>
+					{evaluation.qualityWarnings?.map((warning) => (
+						<li key={warning}>{warning}</li>
+					))}
+				</ul>
+				{evaluation.extractionMetadata?.pageCount !== undefined && (
+					<p>
+						{evaluation.extractionMetadata?.pageCount} page
+						{evaluation.extractionMetadata?.pageCount === 1
+							? ""
+							: "s"}
+						, {evaluation.extractionMetadata?.blockCount ?? 0}{" "}
+						evidence blocks
+					</p>
+				)}
+			</section>
+		)}
 
 		{(evaluation.assessments ?? []).length === 0 ? (
 			<p className="muted-copy">

@@ -1026,6 +1026,17 @@ p {
 	gap: 0.5rem;
 	justify-content: space-between;
 }
+.quality-cell {
+	display: grid;
+	font-size: 0.75rem;
+	gap: 0.15rem;
+	text-transform: capitalize;
+}
+.quality-cell small {
+	color: var(--muted);
+	font-size: 0.6875rem;
+	text-transform: none;
+}
 .cell-action {
 	text-align: right;
 }
@@ -1405,6 +1416,27 @@ p {
 	flex-wrap: wrap;
 	font-size: 0.75rem;
 	gap: 0.75rem;
+}
+.drawer-quality {
+	border-bottom: 1px solid var(--rule);
+	padding-bottom: 1rem;
+}
+.drawer-quality h3 {
+	font-size: 0.8125rem;
+	margin-bottom: 0.5rem;
+}
+.drawer-quality ul,
+.drawer-quality p {
+	color: var(--muted);
+	font-size: 0.75rem;
+	line-height: 1.5;
+}
+.drawer-quality ul {
+	margin: 0;
+	padding-left: 1rem;
+}
+.drawer-quality p {
+	margin: 0.5rem 0 0;
 }
 .assessment-card {
 	background: #fff;
