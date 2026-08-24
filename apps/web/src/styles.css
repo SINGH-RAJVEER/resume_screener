@@ -82,6 +82,18 @@ p {
 	width: 0.45rem;
 }
 
+.particle-field {
+	inset: 0;
+	pointer-events: none;
+	position: fixed;
+	z-index: -1;
+}
+@media (prefers-reduced-motion: reduce) {
+	.particle-field {
+		display: none;
+	}
+}
+
 .structure-flow {
 	height: 100%;
 	inset: 0;
