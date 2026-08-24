@@ -77,8 +77,11 @@ const toLocalInput = (iso: string | null) =>
 const draftsToRequirements = (job: JobDetail): Requirement[] =>
 	job.draftRequirements.map((requirement) => ({
 		...requirement,
-		kind: "required",
-		weight: 2,
+		kind:
+			requirement.assessability === "resume_evidence"
+				? requirement.suggestedKind
+				: "ignored",
+		weight: requirement.suggestedWeight,
 	}));
 
 const eligibilityChipClass = (
@@ -247,6 +250,29 @@ export const Workspace = () => {
 		void refreshEvaluations(selectedJob.id).catch(reportError);
 	}, [selectedJob, refreshEvaluations, reportError]);
 
+	useEffect(() => {
+		if (selectedJob?.draftStatus !== "processing") return;
+		const jobId = selectedJob.id;
+		const interval = window.setInterval(() => {
+			void workspaceClient
+				.job(jobId)
+				.then((detail) => {
+					setSelectedJob((current) =>
+						current?.id === jobId ? detail : current,
+					);
+					if (detail.draftStatus !== "processing") {
+						setRequirements((current) =>
+							current.length
+								? current
+								: draftsToRequirements(detail),
+						);
+					}
+				})
+				.catch(() => {});
+		}, 1_500);
+		return () => window.clearInterval(interval);
+	}, [selectedJob]);
+
 	const hasPendingEvaluations = evaluations.some(
 		(evaluation) => evaluation.status !== "complete",
 	);
@@ -337,7 +363,7 @@ export const Workspace = () => {
 			setActiveTab("criteria");
 			setJobs(await workspaceClient.jobs(organizationId));
 			setNotice(
-				"Role created with draft criteria. Confirm them to enable resume evaluations.",
+				"Role created. Requirement extraction is running before recruiter review.",
 			);
 		} catch (reason) {
 			reportError(reason);
@@ -824,8 +850,14 @@ export const Workspace = () => {
 
 							{activeTab === "criteria" && (
 								<CriteriaTab
-									canConfirm={requirements.length > 0}
+									canConfirm={
+										requirements.length > 0 &&
+										selectedJob.draftStatus !== "processing"
+									}
 									confirmed={selectedJob.confirmed}
+									draftDegraded={selectedJob.draftDegraded}
+									draftStatus={selectedJob.draftStatus}
+									draftWarnings={selectedJob.draftWarnings}
 									onAdd={() =>
 										setRequirements((current) => [
 											...current,
@@ -1382,6 +1414,9 @@ type CriteriaTabProps = {
 	requirements: Requirement[];
 	confirmed: boolean;
 	canConfirm: boolean;
+	draftStatus: JobDetail["draftStatus"];
+	draftWarnings: string[];
+	draftDegraded: boolean;
 	onChange: (
 		index: number,
 		patch: Partial<Pick<Requirement, "normalizedText" | "kind" | "weight">>,
@@ -1394,33 +1429,88 @@ const CriteriaTab = ({
 	requirements,
 	confirmed,
 	canConfirm,
+	draftStatus,
+	draftWarnings,
+	draftDegraded,
 	onChange,
 	onAdd,
 	onConfirm,
 }: CriteriaTabProps) => (
 	<div className="workspace-stage-gap">
 		<p className="criterion-note">
-			Draft criteria are extracted from the job description. Classify each
-			as required, preferred, ignored, or a hard gate before confirming.
-			Confirming creates an immutable version that all scoring uses.
+			Review every extracted criterion against its source. Only
+			resume-evidence criteria can enter automated scoring. Hard gates
+			remain a recruiter decision and only an evidenced failure can make
+			an evaluation ineligible.
 		</p>
+		{draftStatus === "processing" && (
+			<div className="criterion-processing" role="status">
+				<LoaderCircle aria-hidden className="spin" />
+				Compiling requirements and checking source evidence...
+			</div>
+		)}
+		{draftDegraded && (
+			<p className="criterion-warning">
+				Model extraction was unavailable. Review the deterministic draft
+				carefully.
+			</p>
+		)}
+		{draftWarnings.length > 0 && (
+			<ul className="criterion-warnings">
+				{draftWarnings.map((warning) => (
+					<li key={warning}>{warning}</li>
+				))}
+			</ul>
+		)}
 		<div className="criterion-list">
 			{requirements.map((requirement, index) => (
 				<div className="criterion-row" key={requirement.stableId}>
 					<span className="criterion-index">
 						{(index + 1).toString().padStart(2, "0")}
 					</span>
-					<Input
-						aria-label={`Requirement ${index + 1} statement`}
-						className="criterion-text"
-						onChange={(event) =>
-							onChange(index, {
-								normalizedText: event.target.value,
-							})
-						}
-						placeholder="Requirement statement..."
-						value={requirement.normalizedText ?? ""}
-					/>
+					<div className="criterion-content">
+						<Input
+							aria-label={`Requirement ${index + 1} statement`}
+							className="criterion-text"
+							onChange={(event) =>
+								onChange(index, {
+									normalizedText: event.target.value,
+								})
+							}
+							placeholder="Requirement statement..."
+							value={requirement.normalizedText ?? ""}
+						/>
+						<div className="criterion-metadata">
+							<span>
+								{formatRequirementLabel(requirement.category)}
+							</span>
+							<span>
+								{formatRequirementLabel(
+									requirement.assessability,
+								)}
+							</span>
+							{requirement.predicate?.operator === "any_of" && (
+								<span>alternative paths</span>
+							)}
+							{requirement.confidence !== undefined && (
+								<span>
+									{Math.round(requirement.confidence * 100)}%
+									extraction confidence
+								</span>
+							)}
+						</div>
+						{(requirement.evidence ??
+							requirement.sourceEvidence)?.[0] && (
+							<blockquote className="criterion-source">
+								"
+								{
+									(requirement.evidence ??
+										requirement.sourceEvidence)?.[0]?.quote
+								}
+								"
+							</blockquote>
+						)}
+					</div>
 					<div className="criterion-kind">
 						<select
 							aria-label={`Requirement ${index + 1} kind`}
@@ -1434,7 +1524,15 @@ const CriteriaTab = ({
 						>
 							<option value="required">Required</option>
 							<option value="preferred">Preferred</option>
-							<option value="hard_gate">Hard gate</option>
+							<option
+								disabled={
+									requirement.assessability !==
+									"resume_evidence"
+								}
+								value="hard_gate"
+							>
+								Hard gate
+							</option>
 							<option value="ignored">Ignored</option>
 						</select>
 						<Input
@@ -1467,6 +1565,9 @@ const CriteriaTab = ({
 		</div>
 	</div>
 );
+
+const formatRequirementLabel = (value?: string) =>
+	value ? value.replaceAll("_", " ") : "manual criterion";
 
 type UploadTabProps = {
 	confirmed: boolean;

@@ -945,23 +945,59 @@ p {
 	font-weight: 400;
 }
 .criterion-note {
-	background: #fff;
-	border: 1px solid var(--rule);
 	font-size: 0.75rem;
-	padding: 0.8rem 0.9rem;
+	max-width: 58rem;
+}
+.criterion-processing,
+.criterion-warning {
+	align-items: center;
+	display: flex;
+	font-size: 0.78rem;
+	gap: 0.5rem;
+}
+.criterion-processing svg {
+	height: 1rem;
+	width: 1rem;
+}
+.criterion-warning,
+.criterion-warnings {
+	color: var(--muted);
+}
+.criterion-warnings {
+	font-size: 0.75rem;
+	margin: 0;
+	padding-left: 1.1rem;
 }
 .criterion-list {
 	display: grid;
 	gap: 0.5rem;
 }
 .criterion-row {
-	align-items: center;
-	background: #fff;
-	border: 1px solid var(--rule);
+	align-items: flex-start;
+	border-bottom: 1px solid var(--rule);
 	display: flex;
 	flex-direction: column;
 	gap: 0.7rem;
-	padding: 0.7rem 0.8rem;
+	padding: 0.8rem 0;
+}
+.criterion-content {
+	display: grid;
+	flex: 1;
+	gap: 0.35rem;
+	width: 100%;
+}
+.criterion-metadata {
+	color: var(--muted);
+	display: flex;
+	flex-wrap: wrap;
+	font-size: 0.68rem;
+	gap: 0.4rem 0.8rem;
+	text-transform: capitalize;
+}
+.criterion-source {
+	color: var(--muted);
+	font-size: 0.72rem;
+	margin: 0;
 }
 @media (min-width: 720px) {
 	.criterion-row {

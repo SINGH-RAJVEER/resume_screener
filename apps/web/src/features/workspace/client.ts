@@ -20,6 +20,36 @@ export interface Requirement {
 	normalizedText?: string;
 	kind: "required" | "preferred" | "ignored" | "hard_gate";
 	weight: number;
+	category?: string;
+	sourceModality?: string;
+	assessability?: string;
+	predicate?: {
+		operator: "all_of" | "any_of";
+		criteria: Array<{
+			type: string;
+			canonicalName?: string | null;
+			minimumMonths?: number | null;
+			minimumLevel?: string | null;
+			subjects?: string[];
+		}>;
+	};
+	evidence?: RequirementEvidence[];
+	sourceEvidence?: RequirementEvidence[];
+	confidence?: number;
+	signals?: string[];
+}
+
+export interface RequirementEvidence {
+	blockId: string;
+	quote: string;
+	startOffset?: number;
+	endOffset?: number;
+	section?: string;
+}
+
+export interface DraftRequirement extends Omit<Requirement, "kind" | "weight"> {
+	suggestedKind: "required" | "preferred" | "ignored";
+	suggestedWeight: number;
 }
 
 export interface JobDetail {
@@ -30,8 +60,12 @@ export interface JobDetail {
 	confirmed: boolean;
 	applicationOpensAt: string | null;
 	applicationClosesAt: string | null;
+	draftStatus: "processing" | "ready" | "failed";
+	draftQualityState: "ready" | "review_required" | null;
+	draftWarnings: string[];
+	draftDegraded: boolean;
 	requirements: Requirement[];
-	draftRequirements: Array<{ stableId: string; normalizedText: string }>;
+	draftRequirements: DraftRequirement[];
 }
 
 export interface Member {
@@ -130,14 +164,17 @@ export const workspaceClient = {
 		URL.revokeObjectURL(url);
 	},
 	createJob: (organizationId: string, title: string, description: string) =>
-		request<{ id: string; versionId: string }>("/api/jobs", {
-			method: "POST",
-			body: JSON.stringify({
-				organization_id: organizationId,
-				title,
-				description,
-			}),
-		}),
+		request<{ id: string; versionId: string; processingJobId: string }>(
+			"/api/jobs",
+			{
+				method: "POST",
+				body: JSON.stringify({
+					organization_id: organizationId,
+					title,
+					description,
+				}),
+			},
+		),
 	confirmRequirements: (jobId: string, requirements: Requirement[]) =>
 		request<{ confirmed: boolean }>(`/api/jobs/${jobId}/requirements`, {
 			method: "POST",
