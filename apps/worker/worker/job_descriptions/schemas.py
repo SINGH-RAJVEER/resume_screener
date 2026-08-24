@@ -3,9 +3,11 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-JOB_REQUIREMENTS_SCHEMA_VERSION = "2"
-JOB_REQUIREMENTS_PROMPT_VERSION = "1"
-JOB_REQUIREMENTS_COMPILER_VERSION = "compiler-2"
+from ..versions import (
+	JOB_REQUIREMENTS_COMPILER_VERSION,
+	JOB_REQUIREMENTS_PROMPT_VERSION,
+	JOB_REQUIREMENTS_SCHEMA_VERSION,
+)
 
 
 class SchemaModel(BaseModel):

@@ -16,6 +16,16 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from ..domain.versions import (
+	ASSESSMENT_PROMPT_VERSION,
+	EXTRACTION_PROMPT_VERSION,
+	JOB_REQUIREMENTS_COMPILER_VERSION,
+	JOB_REQUIREMENTS_PROMPT_VERSION,
+	PARSER_CONFIGURATION_VERSION,
+	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+	SCORING_POLICY_VERSION,
+)
+
 
 class Base(DeclarativeBase):
     pass
@@ -213,7 +223,9 @@ class ResumeVersion(Base):
         Text, nullable=False, server_default=text("'pending'")
     )
     parser_version: Mapped[str | None] = mapped_column(Text)
+    parser_configuration_version: Mapped[str | None] = mapped_column(Text)
     schema_version: Mapped[str | None] = mapped_column(Text)
+    extraction_prompt_version: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -266,7 +278,10 @@ class Job(Base):
 
 class JobVersion(Base):
     __tablename__ = "job_version"
-    __table_args__ = (UniqueConstraint("job_id", "version", name="uq_job_version"),)
+    __table_args__ = (
+		UniqueConstraint("job_id", "version", name="uq_job_version"),
+		UniqueConstraint("job_id", "id", name="uq_job_version_job"),
+	)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"), nullable=False)
@@ -276,6 +291,12 @@ class JobVersion(Base):
     source_media_type: Mapped[str] = mapped_column(Text, nullable=False)
     draft_requirements: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     schema_version: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{JOB_REQUIREMENTS_PROMPT_VERSION}'")
+	)
+    compiler_version: Mapped[str | None] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{JOB_REQUIREMENTS_COMPILER_VERSION}'")
+	)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -389,19 +410,67 @@ class ProcessingJob(Base):
     )
 
 
+class BatchEvaluation(Base):
+	__tablename__ = "batch_evaluation"
+	__table_args__ = (
+		ForeignKeyConstraint(
+			["organization_id", "job_id"],
+			["job.organization_id", "job.id"],
+			ondelete="CASCADE",
+		),
+		ForeignKeyConstraint(
+			["job_id", "job_version_id"],
+			["job_version.job_id", "job_version.id"],
+			ondelete="RESTRICT",
+		),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	organization_id: Mapped[str] = mapped_column(Text, nullable=False)
+	job_id: Mapped[str] = mapped_column(Text, nullable=False)
+	job_version_id: Mapped[str] = mapped_column(Text, nullable=False)
+	created_by_user_id: Mapped[str] = mapped_column(
+		ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
+	)
+	requirement_schema_version: Mapped[str] = mapped_column(Text, nullable=False)
+	scoring_policy_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
+	)
+	model_configuration: Mapped[dict[str, object]] = mapped_column(
+		JSONB, nullable=False, server_default=text("'{}'::jsonb")
+	)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
+
+
 class Evaluation(Base):
     __tablename__ = "evaluation"
     __table_args__ = (
+		CheckConstraint(
+			"status IN ('pending', 'processing', 'complete', 'failed')",
+			name="ck_evaluation_status",
+		),
         CheckConstraint(
             "eligibility IN ('pending', 'eligible', 'needs_review', 'not_eligible')",
             name="ck_evaluation_eligibility",
         ),
+		CheckConstraint("score IS NULL OR score BETWEEN 0 AND 100", name="ck_evaluation_score"),
+		CheckConstraint(
+			"evidence_coverage IS NULL OR evidence_coverage BETWEEN 0 AND 100",
+			name="ck_evaluation_evidence_coverage",
+		),
         UniqueConstraint(
-            "resume_submission_id", "job_version_id", name="uq_evaluation_submission_job_version"
+			"batch_evaluation_id",
+			"resume_submission_id",
+			name="uq_evaluation_batch_submission",
         ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+	batch_evaluation_id: Mapped[str | None] = mapped_column(
+		ForeignKey("batch_evaluation.id", ondelete="CASCADE")
+	)
     resume_submission_id: Mapped[str] = mapped_column(
         ForeignKey("resume_submission.id", ondelete="CASCADE"), nullable=False
     )
@@ -418,10 +487,36 @@ class Evaluation(Base):
     quality_state: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'pending'")
     )
+	scoring_policy_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
+	)
+	assessment_schema_version: Mapped[str] = mapped_column(
+		Text,
+		nullable=False,
+		server_default=text(f"'{REQUIREMENT_ASSESSMENT_SCHEMA_VERSION}'"),
+	)
+	assessment_prompt_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{ASSESSMENT_PROMPT_VERSION}'")
+	)
+	rank: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BatchEvaluationSubmission(Base):
+	__tablename__ = "batch_evaluation_submission"
+
+	batch_evaluation_id: Mapped[str] = mapped_column(
+		ForeignKey("batch_evaluation.id", ondelete="CASCADE"), primary_key=True
+	)
+	resume_submission_id: Mapped[str] = mapped_column(
+		ForeignKey("resume_submission.id", ondelete="RESTRICT"), primary_key=True
+	)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
 
 
 class RequirementAssessment(Base):
@@ -451,6 +546,29 @@ class RequirementAssessment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ReviewDecision(Base):
+	__tablename__ = "review_decision"
+	__table_args__ = (
+		CheckConstraint(
+			"eligibility IN ('eligible', 'needs_review', 'not_eligible')",
+			name="ck_review_decision_eligibility",
+		),
+	)
+
+	id: Mapped[str] = mapped_column(Text, primary_key=True)
+	evaluation_id: Mapped[str] = mapped_column(
+		ForeignKey("evaluation.id", ondelete="CASCADE"), nullable=False
+	)
+	reviewer_user_id: Mapped[str] = mapped_column(
+		ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
+	)
+	eligibility: Mapped[str] = mapped_column(Text, nullable=False)
+	reason: Mapped[str] = mapped_column(Text, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(
+		DateTime(timezone=True), nullable=False, server_default=func.now()
+	)
 
 
 class Invitation(Base):
@@ -501,6 +619,17 @@ class IndependentEvaluation(Base):
     improved_resume_key: Mapped[str | None] = mapped_column(Text)
     improved_resume_unlocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     normalized_facts: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    parser_version: Mapped[str | None] = mapped_column(Text)
+    parser_configuration_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{PARSER_CONFIGURATION_VERSION}'")
+	)
+    schema_version: Mapped[str | None] = mapped_column(Text)
+    extraction_prompt_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{EXTRACTION_PROMPT_VERSION}'")
+	)
+    scoring_policy_version: Mapped[str] = mapped_column(
+		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
+	)
     safe_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

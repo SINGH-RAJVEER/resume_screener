@@ -10,9 +10,11 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-RESUME_FACTS_SCHEMA_VERSION = "1"
-REQUIREMENT_ASSESSMENT_SCHEMA_VERSION = "1"
-EXTRACTION_PROMPT_VERSION = "1"
+from ..versions import (
+	EXTRACTION_PROMPT_VERSION,
+	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+	RESUME_FACTS_SCHEMA_VERSION,
+)
 
 DATE_PATTERN = r"^\d{4}(-\d{2})?$"
 

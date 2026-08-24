@@ -29,8 +29,18 @@ from ..documents.ingestion import (
     validate_resume,
 )
 from ..documents.storage import LocalObjectStorage
+from ..domain.versions import (
+	ASSESSMENT_PROMPT_VERSION,
+	JOB_REQUIREMENTS_COMPILER_VERSION,
+	JOB_REQUIREMENTS_PROMPT_VERSION,
+	JOB_REQUIREMENTS_SCHEMA_VERSION,
+	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+	SCORING_POLICY_VERSION,
+)
 from ..persistence.join_policy import InvalidDomainError, normalize_domain
 from ..persistence.models import (
+	BatchEvaluation,
+	BatchEvaluationSubmission,
     CandidateRecord,
     Evaluation,
     IndependentEvaluation,
@@ -593,7 +603,9 @@ async def create_job(input_data: JobRequest, request: Request) -> dict[str, str]
         normalized_text=input_data.description.strip(),
         source_media_type="text/plain",
         draft_requirements=None,
-        schema_version="2",
+		schema_version=JOB_REQUIREMENTS_SCHEMA_VERSION,
+		prompt_version=JOB_REQUIREMENTS_PROMPT_VERSION,
+		compiler_version=JOB_REQUIREMENTS_COMPILER_VERSION,
     )
     processing_job = ProcessingJob(
         id=new_id(),
@@ -736,6 +748,8 @@ async def confirm_requirements(
             source_media_type=previous_version.source_media_type,
             draft_requirements=previous_version.draft_requirements,
             schema_version=previous_version.schema_version,
+			prompt_version=previous_version.prompt_version,
+			compiler_version=previous_version.compiler_version,
             confirmed_at=datetime.now(UTC),
         )
         session.add(version)
@@ -937,6 +951,9 @@ async def upload_resume(
         job_version = await latest_job_version(session, job.id)
         if job_version.confirmed_at is None:
             raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
+        batch_evaluation = create_batch_evaluation(job, job_version, user.id)
+        session.add(batch_evaluation)
+        await session.flush()
         candidate = CandidateRecord(
             id=new_id(),
             organization_id=job.organization_id,
@@ -975,12 +992,27 @@ async def upload_resume(
         )
         evaluation = Evaluation(
             id=new_id(),
+			batch_evaluation_id=batch_evaluation.id,
             resume_submission_id=submission.id,
             job_version_id=job_version.id,
             resume_version_id=version.id,
+			scoring_policy_version=SCORING_POLICY_VERSION,
+			assessment_schema_version=REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+			assessment_prompt_version=ASSESSMENT_PROMPT_VERSION,
+        )
+        batch_submission = BatchEvaluationSubmission(
+            batch_evaluation_id=batch_evaluation.id,
+            resume_submission_id=submission.id,
         )
         await add_resume_chain(
-            session, candidate, document, version, submission, processing, evaluation
+			session,
+			candidate,
+			document,
+			version,
+			submission,
+			processing,
+			evaluation,
+			batch_submission,
         )
         if invitation is not None:
             # Set after the chain flush so the update cannot be emitted before
@@ -993,6 +1025,7 @@ async def upload_resume(
         "processingJobId": processing.id,
         "submissionId": submission.id,
         "evaluationId": evaluation.id,
+		"batchEvaluationId": batch_evaluation.id,
     }
 
 
@@ -1023,6 +1056,11 @@ async def upload_resume_batch(
         job_version = await latest_job_version(session, job.id)
         if job_version.confirmed_at is None:
             raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
+        batch_evaluation: BatchEvaluation | None = None
+        if any(entry.content is not None for entry in entries):
+            batch_evaluation = create_batch_evaluation(job, job_version, user.id)
+            session.add(batch_evaluation)
+            await session.flush()
         storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
         for entry in entries:
             if entry.content is None:
@@ -1062,12 +1100,31 @@ async def upload_resume_batch(
             )
             evaluation = Evaluation(
                 id=new_id(),
+				batch_evaluation_id=batch_evaluation.id if batch_evaluation else None,
                 resume_submission_id=submission.id,
                 job_version_id=job_version.id,
                 resume_version_id=version.id,
+				scoring_policy_version=SCORING_POLICY_VERSION,
+				assessment_schema_version=REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
+				assessment_prompt_version=ASSESSMENT_PROMPT_VERSION,
+            )
+            batch_submission = (
+                BatchEvaluationSubmission(
+                    batch_evaluation_id=batch_evaluation.id,
+                    resume_submission_id=submission.id,
+                )
+                if batch_evaluation
+                else None
             )
             await add_resume_chain(
-                session, candidate, document, version, submission, processing, evaluation
+				session,
+				candidate,
+				document,
+				version,
+				submission,
+				processing,
+				evaluation,
+				batch_submission,
             )
             storage.put(document.storage_key, entry.content)
             accepted.append(
@@ -1078,7 +1135,11 @@ async def upload_resume_batch(
                     "evaluationId": evaluation.id,
                 }
             )
-    return {"accepted": accepted, "rejected": rejected}
+    return {
+        "batchEvaluationId": batch_evaluation.id if batch_evaluation else None,
+        "accepted": accepted,
+        "rejected": rejected,
+    }
 
 
 @router.post("/api/independent-evaluations", status_code=202)
@@ -1416,6 +1477,7 @@ async def add_resume_chain(
     submission: ResumeSubmission,
     processing: ProcessingJob,
     evaluation: Evaluation,
+    batch_submission: BatchEvaluationSubmission | None,
 ) -> None:
     # Models declare no relationships, so flush each parent before its
     # dependent rows to guarantee insert order satisfies foreign keys.
@@ -1429,6 +1491,8 @@ async def add_resume_chain(
     await session.flush()
     session.add(processing)
     session.add(evaluation)
+    if batch_submission is not None:
+        session.add(batch_submission)
 
 
 def require_sqlalchemy_store(request: Request) -> SQLAlchemyStore:
@@ -1475,6 +1539,23 @@ async def require_owner(session: AsyncSession, organization_id: str, user_id: st
 
 def new_id() -> str:
     return token_urlsafe(18)
+
+
+def create_batch_evaluation(
+    job: Job, job_version: JobVersion, user_id: str
+) -> BatchEvaluation:
+    return BatchEvaluation(
+        id=new_id(),
+        organization_id=job.organization_id,
+        job_id=job.id,
+        job_version_id=job_version.id,
+        created_by_user_id=user_id,
+        requirement_schema_version=(
+            job_version.schema_version or JOB_REQUIREMENTS_SCHEMA_VERSION
+        ),
+        scoring_policy_version=SCORING_POLICY_VERSION,
+        model_configuration={},
+    )
 
 
 def requirement_drafts_by_id(value: object) -> dict[str, dict[str, object]]:
