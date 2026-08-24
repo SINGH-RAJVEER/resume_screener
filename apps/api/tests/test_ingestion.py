@@ -1,5 +1,5 @@
 from io import BytesIO
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -29,6 +29,36 @@ def test_rejects_macro_enabled_docx_content() -> None:
 		archive.writestr("word/vbaProject.bin", "macro")
 
 	with pytest.raises(DocumentValidationError, match="Macro-enabled"):
+		validate_document(
+			content.getvalue(),
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"resume.docx",
+		)
+
+
+def test_rejects_docx_packages_with_suspicious_compression() -> None:
+	content = BytesIO()
+	with ZipFile(content, "w", compression=ZIP_DEFLATED) as archive:
+		archive.writestr("[Content_Types].xml", "content types")
+		archive.writestr("word/document.xml", "A" * 1_000_000)
+
+	with pytest.raises(DocumentValidationError, match="suspicious compression ratio"):
+		validate_document(
+			content.getvalue(),
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"resume.docx",
+		)
+
+
+def test_rejects_docx_packages_with_too_many_entries() -> None:
+	content = BytesIO()
+	with ZipFile(content, "w") as archive:
+		archive.writestr("[Content_Types].xml", "content types")
+		archive.writestr("word/document.xml", "document")
+		for index in range(1_001):
+			archive.writestr(f"word/media/{index}.bin", b"x")
+
+	with pytest.raises(DocumentValidationError, match="too many package entries"):
 		validate_document(
 			content.getvalue(),
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",

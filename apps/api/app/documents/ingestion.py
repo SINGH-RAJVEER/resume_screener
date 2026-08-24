@@ -8,6 +8,8 @@ MAX_RESUME_BYTES = 20 * 1024 * 1024
 MAX_BATCH_FILES = 500
 MAX_BATCH_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 100
+MAX_DOCX_ENTRIES = 1_000
+MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 SUPPORTED_RESUME_TYPES = {
 	"application/pdf": ".pdf",
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
@@ -54,9 +56,22 @@ def validate_docx(content: bytes) -> None:
 		raise DocumentValidationError("Document content is not a DOCX file")
 	try:
 		with ZipFile(BytesIO(content)) as archive:
-			names = set(archive.namelist())
+			entries = archive.infolist()
 	except BadZipFile as error:
 		raise DocumentValidationError("Document DOCX file is malformed") from error
+	if len(entries) > MAX_DOCX_ENTRIES:
+		raise DocumentValidationError("Document DOCX has too many package entries")
+	if sum(entry.file_size for entry in entries) > MAX_DOCX_UNCOMPRESSED_BYTES:
+		raise DocumentValidationError("Document DOCX package is too large")
+	if any(entry.flag_bits & 0x1 for entry in entries):
+		raise DocumentValidationError("Encrypted DOCX packages are not supported")
+	if any(
+		entry.compress_size
+		and entry.file_size / entry.compress_size > MAX_COMPRESSION_RATIO
+		for entry in entries
+	):
+		raise DocumentValidationError("Document DOCX has a suspicious compression ratio")
+	names = {entry.filename for entry in entries}
 	if "[Content_Types].xml" not in names or "word/document.xml" not in names:
 		raise DocumentValidationError("Document content is not a DOCX file")
 	if any(name.casefold().endswith("vbaproject.bin") for name in names):
