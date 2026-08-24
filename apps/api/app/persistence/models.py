@@ -67,9 +67,18 @@ class Account(Base):
 
 class Organization(Base):
     __tablename__ = "organization"
+    __table_args__ = (
+        CheckConstraint(
+            "default_member_role IN ('recruiter', 'viewer')",
+            name="ck_organization_default_member_role",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    default_member_role: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'viewer'")
+    )
     retention_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("90"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -92,6 +101,36 @@ class OrganizationMember(Base):
     )
     user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class OrganizationEmailDomain(Base):
+    __tablename__ = "organization_email_domain"
+    __table_args__ = (UniqueConstraint("domain", name="uq_organization_email_domain"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class OrganizationAllowedEmail(Base):
+    __tablename__ = "organization_allowed_email"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "email", name="uq_organization_allowed_email"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
