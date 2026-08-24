@@ -172,12 +172,15 @@ def compile_job_description(
 		model_candidates, model_warnings = grounded_model_candidates(model_output, blocks)
 		warnings.extend(model_warnings)
 		candidates.extend(model_candidates)
+		if not model_candidates:
+			degraded = True
+			warnings.append("Model extraction produced no grounded requirements")
 	requirements = deduplicate(candidates, warnings)[:MAX_DRAFT_REQUIREMENTS]
 	if len(candidates) > MAX_DRAFT_REQUIREMENTS:
 		warnings.append("Low-confidence requirements were omitted after the review limit")
 	if degraded_reason:
 		warnings.append(degraded_reason)
-	quality_state = "ready" if requirements else "review_required"
+	quality_state = "ready" if requirements and not warnings and not degraded else "review_required"
 	if not requirements:
 		warnings.append("No explicit job requirements were found; add criteria manually")
 	return {

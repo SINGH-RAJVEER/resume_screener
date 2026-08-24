@@ -29,7 +29,12 @@ def upgrade() -> None:
 	)
 	op.add_column(
 		"job_requirement",
-		sa.Column("assessability", sa.Text(), server_default="unclear", nullable=False),
+		sa.Column(
+			"assessability",
+			sa.Text(),
+			server_default="resume_evidence",
+			nullable=False,
+		),
 	)
 	op.add_column(
 		"job_requirement",
@@ -45,6 +50,11 @@ def upgrade() -> None:
 		"job_requirement",
 		"assessability IN ('resume_evidence', 'candidate_attestation', "
 		"'recruiter_review', 'prohibited', 'unclear')",
+	)
+	op.alter_column(
+		"job_requirement",
+		"assessability",
+		server_default="unclear",
 	)
 
 

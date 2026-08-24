@@ -162,3 +162,4 @@ def test_grounded_model_output_is_fused_and_ungrounded_output_is_dropped() -> No
 	assert "model" in cast(list[str], drafts[0]["signals"])
 	warnings = cast(list[str], artifact["warnings"])
 	assert any("unsafe or ungrounded" in warning for warning in warnings)
+	assert artifact["qualityState"] == "review_required"
