@@ -9,7 +9,7 @@ const PARTICLE_COUNT_MOBILE = 70;
 const DEPTH = 1000;
 const FOV = 300;
 const SPEED = 1.1;
-const TRAIL_FADE = 0.45;
+const TRAIL_FADE = 0.4;
 const INK_TONES = ["17, 17, 17", "128, 128, 128"];
 
 class Particle {
@@ -62,8 +62,8 @@ class Particle {
 		ctx.beginPath();
 		ctx.moveTo(prevPx, prevPy);
 		ctx.lineTo(px, py);
-		ctx.strokeStyle = `rgba(${this.tone}, ${opacity * 0.5})`;
-		ctx.lineWidth = Math.max(0.25, opacity * 0.4);
+		ctx.strokeStyle = `rgba(${this.tone}, ${opacity * 0.65})`;
+		ctx.lineWidth = Math.max(0.3, opacity * 0.5);
 		ctx.lineCap = "butt";
 		ctx.stroke();
 	}
