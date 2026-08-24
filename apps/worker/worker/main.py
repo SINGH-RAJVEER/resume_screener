@@ -24,6 +24,7 @@ from .documents.processing import (
 from .documents.renderer import render_resume_docx
 from .evaluations.evaluator import Assessment, evaluate, refine_assessments, summarize
 from .evaluations.independent import independent_report
+from .evaluations.lexical import top_lexical_matches
 from .evaluations.semantic import text_hash, top_semantic_matches
 from .extraction.extractor import (
 	assess_requirements,
@@ -830,12 +831,12 @@ class Worker:
 				if requirement.get("assessability") == "resume_evidence"
 				and requirement.get("kind") != "ignored"
 			]
+			extraction_blocks = cast(
+				Mapping[str, object],
+				cast(object, evaluation["extraction_blocks"]) or {},
+			)
+			blocks = cast(list[Mapping[str, object]], extraction_blocks.get("blocks", []))
 			if self._openrouter is not None and assessable_requirements:
-				extraction_blocks = cast(
-					Mapping[str, object],
-					cast(object, evaluation["extraction_blocks"]) or {},
-				)
-				blocks = cast(list[Mapping[str, object]], extraction_blocks.get("blocks", []))
 				try:
 					model_assessments = await assess_requirements(
 						self._openrouter,
@@ -855,10 +856,18 @@ class Worker:
 						assessments, model_assessments, requirement_list
 					)
 					outcome = summarize(assessments, requirement_list)
+			block_texts = {
+				str(block["id"]): str(block.get("text", ""))
+				for block in blocks
+				if block.get("id")
+			}
 			semantic_evidence = await self._retrieve_semantic_evidence(
 				job,
 				version_id=str(evaluation["resume_version_id"]),
 				requirements=requirement_list,
+			)
+			lexical_evidence = self._retrieve_lexical_evidence(
+				requirements=requirement_list, block_texts=block_texts
 			)
 			for assessment in outcome.assessments:
 				await connection.execute(
@@ -866,11 +875,12 @@ class Worker:
 						"""
 						INSERT INTO requirement_assessment (
 							id, evaluation_id, job_requirement_id, outcome, confidence,
-							reasoning, evidence, semantic_evidence, created_at
+							reasoning, evidence, semantic_evidence, lexical_evidence, created_at
 						) VALUES (
 							:id, :evaluation_id, :job_requirement_id, :outcome,
 							:confidence, :reasoning,
-							CAST(:evidence AS jsonb), CAST(:semantic AS jsonb), now()
+							CAST(:evidence AS jsonb), CAST(:semantic AS jsonb),
+							CAST(:lexical AS jsonb), now()
 						)
 						ON CONFLICT (evaluation_id, job_requirement_id) DO NOTHING
 						"""
@@ -884,6 +894,7 @@ class Worker:
 						"reasoning": assessment.reasoning,
 						"evidence": json.dumps(assessment.evidence),
 						"semantic": json.dumps(semantic_evidence.get(assessment.requirement_id)),
+						"lexical": json.dumps(lexical_evidence.get(assessment.requirement_id)),
 					},
 				)
 			await connection.execute(
@@ -963,6 +974,23 @@ class Worker:
 			matches = top_semantic_matches(vector, block_vectors)
 			if matches:
 				retrieved[str(requirement["id"])] = {"model": model, "matches": matches}
+		return retrieved
+
+	def _retrieve_lexical_evidence(
+		self,
+		*,
+		requirements: list[dict[str, object]],
+		block_texts: Mapping[str, str],
+	) -> dict[str, dict[str, object]]:
+		if not requirements or not block_texts:
+			return {}
+		retrieved: dict[str, dict[str, object]] = {}
+		for requirement in requirements:
+			matches = top_lexical_matches(
+				str(requirement.get("normalized_text") or ""), block_texts
+			)
+			if matches:
+				retrieved[str(requirement["id"])] = {"matches": matches}
 		return retrieved
 
 	async def _complete(self, job: ClaimedJob) -> None:

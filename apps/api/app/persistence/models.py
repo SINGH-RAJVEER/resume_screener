@@ -577,6 +577,7 @@ class RequirementAssessment(Base):
     evidence: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     deterministic_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     semantic_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    lexical_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

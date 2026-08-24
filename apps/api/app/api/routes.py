@@ -1471,22 +1471,33 @@ def assessment_payload(
     requirement: JobRequirement,
     block_texts: dict[str, str],
 ) -> dict[str, object]:
-    semantic = assessment.semantic_evidence
-    if isinstance(semantic, dict):
-        matches = semantic.get("matches")
-        if isinstance(matches, list):
-            for entry in cast(list[object], matches):
-                if not isinstance(entry, dict):
-                    continue
-                match: dict[str, object] = dict(cast(dict[str, object], entry))
-                match["text"] = block_texts.get(str(match.get("blockId")), "")
     return {
         "requirement": requirement.normalized_text,
         "outcome": assessment.outcome,
         "reasoning": assessment.reasoning,
         "evidence": assessment.evidence,
-        "semanticEvidence": semantic,
+        "semanticEvidence": evidence_with_text(assessment.semantic_evidence, block_texts),
+        "lexicalEvidence": evidence_with_text(assessment.lexical_evidence, block_texts),
     }
+
+
+def evidence_with_text(
+    evidence: object | None, block_texts: dict[str, str]
+) -> dict[str, object] | None:
+    if not isinstance(evidence, dict):
+        return None
+    resolved = {key: value for key, value in evidence.items() if key != "matches"}
+    matches = evidence.get("matches")
+    if isinstance(matches, list):
+        with_text: list[object] = []
+        for entry in cast(list[object], matches):
+            if not isinstance(entry, dict):
+                continue
+            match = dict(cast(dict[str, object], entry))
+            match["text"] = block_texts.get(str(match.get("blockId")), "")
+            with_text.append(match)
+        resolved["matches"] = with_text
+    return resolved
 
 
 @router.get("/api/jobs/{job_id}/evaluations.csv")
