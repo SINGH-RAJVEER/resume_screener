@@ -17,12 +17,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..domain.versions import (
-	ASSESSMENT_PROMPT_VERSION,
-	EXTRACTION_PROMPT_VERSION,
 	JOB_REQUIREMENTS_COMPILER_VERSION,
 	JOB_REQUIREMENTS_PROMPT_VERSION,
 	PARSER_CONFIGURATION_VERSION,
-	REQUIREMENT_ASSESSMENT_SCHEMA_VERSION,
 	SCORING_POLICY_VERSION,
 )
 
@@ -286,9 +283,10 @@ class JobVersion(Base):
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+    source_text: Mapped[str | None] = mapped_column(Text)
     normalized_text: Mapped[str | None] = mapped_column(Text)
     source_media_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_storage_key: Mapped[str | None] = mapped_column(Text)
     draft_requirements: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     schema_version: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[str | None] = mapped_column(
@@ -364,6 +362,9 @@ class ResumeSubmission(Base):
         UniqueConstraint(
             "job_id", "candidate_record_id", "resume_version_id", name="uq_submission"
         ),
+		UniqueConstraint(
+			"organization_id", "job_id", "id", name="uq_submission_organization_job"
+		),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -423,6 +424,9 @@ class BatchEvaluation(Base):
 			["job_version.job_id", "job_version.id"],
 			ondelete="RESTRICT",
 		),
+		UniqueConstraint(
+			"organization_id", "job_id", "id", name="uq_batch_evaluation_organization_job"
+		),
 	)
 
 	id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -465,12 +469,20 @@ class Evaluation(Base):
 			"resume_submission_id",
 			name="uq_evaluation_batch_submission",
         ),
+		ForeignKeyConstraint(
+			["batch_evaluation_id", "resume_submission_id"],
+			[
+				"batch_evaluation_submission.batch_evaluation_id",
+				"batch_evaluation_submission.resume_submission_id",
+			],
+			ondelete="CASCADE",
+		),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-	batch_evaluation_id: Mapped[str | None] = mapped_column(
-		ForeignKey("batch_evaluation.id", ondelete="CASCADE")
-	)
+    batch_evaluation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("batch_evaluation.id", ondelete="CASCADE")
+    )
     resume_submission_id: Mapped[str] = mapped_column(
         ForeignKey("resume_submission.id", ondelete="CASCADE"), nullable=False
     )
@@ -487,18 +499,12 @@ class Evaluation(Base):
     quality_state: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'pending'")
     )
-	scoring_policy_version: Mapped[str] = mapped_column(
-		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
-	)
-	assessment_schema_version: Mapped[str] = mapped_column(
-		Text,
-		nullable=False,
-		server_default=text(f"'{REQUIREMENT_ASSESSMENT_SCHEMA_VERSION}'"),
-	)
-	assessment_prompt_version: Mapped[str] = mapped_column(
-		Text, nullable=False, server_default=text(f"'{ASSESSMENT_PROMPT_VERSION}'")
-	)
-	rank: Mapped[int | None] = mapped_column(Integer)
+    scoring_policy_version: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
+    )
+    assessment_schema_version: Mapped[str | None] = mapped_column(Text)
+    assessment_prompt_version: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -507,13 +513,31 @@ class Evaluation(Base):
 
 class BatchEvaluationSubmission(Base):
 	__tablename__ = "batch_evaluation_submission"
+	__table_args__ = (
+		ForeignKeyConstraint(
+			["organization_id", "job_id", "batch_evaluation_id"],
+			[
+				"batch_evaluation.organization_id",
+				"batch_evaluation.job_id",
+				"batch_evaluation.id",
+			],
+			ondelete="CASCADE",
+		),
+		ForeignKeyConstraint(
+			["organization_id", "job_id", "resume_submission_id"],
+			[
+				"resume_submission.organization_id",
+				"resume_submission.job_id",
+				"resume_submission.id",
+			],
+			ondelete="RESTRICT",
+		),
+	)
 
-	batch_evaluation_id: Mapped[str] = mapped_column(
-		ForeignKey("batch_evaluation.id", ondelete="CASCADE"), primary_key=True
-	)
-	resume_submission_id: Mapped[str] = mapped_column(
-		ForeignKey("resume_submission.id", ondelete="RESTRICT"), primary_key=True
-	)
+	organization_id: Mapped[str] = mapped_column(Text, nullable=False)
+	job_id: Mapped[str] = mapped_column(Text, nullable=False)
+	batch_evaluation_id: Mapped[str] = mapped_column(Text, primary_key=True)
+	resume_submission_id: Mapped[str] = mapped_column(Text, primary_key=True)
 	created_at: Mapped[datetime] = mapped_column(
 		DateTime(timezone=True), nullable=False, server_default=func.now()
 	)
@@ -613,6 +637,8 @@ class IndependentEvaluation(Base):
     original_name: Mapped[str] = mapped_column(Text, nullable=False)
     media_type: Mapped[str] = mapped_column(Text, nullable=False)
     job_description: Mapped[str | None] = mapped_column(Text)
+    job_description_key: Mapped[str | None] = mapped_column(Text)
+    job_description_media_type: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
     score: Mapped[int | None] = mapped_column(Integer)
     suggestions: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
@@ -624,9 +650,7 @@ class IndependentEvaluation(Base):
 		Text, nullable=False, server_default=text(f"'{PARSER_CONFIGURATION_VERSION}'")
 	)
     schema_version: Mapped[str | None] = mapped_column(Text)
-    extraction_prompt_version: Mapped[str] = mapped_column(
-		Text, nullable=False, server_default=text(f"'{EXTRACTION_PROMPT_VERSION}'")
-	)
+    extraction_prompt_version: Mapped[str | None] = mapped_column(Text)
     scoring_policy_version: Mapped[str] = mapped_column(
 		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
 	)
