@@ -19,6 +19,7 @@ from .core.http import (
     error_body,
 )
 from .persistence.store import SQLAlchemyStore, Store, create_engine_for_url
+from .telemetry import instrument_app, instrument_engine, setup_telemetry
 
 logger = logging.getLogger("resume-screener.api")
 
@@ -32,6 +33,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         engine = create_engine_for_url(settings.database_url)
     try:
         if engine is not None:
+            instrument_engine(engine)
             async with engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
             application.state.store = SQLAlchemyStore(engine)
@@ -69,6 +71,8 @@ def create_app(store: Store | None = None, settings: Settings | None = None) -> 
     application.add_middleware(BodySizeLimitMiddleware)
     application.add_middleware(OriginGuardMiddleware, web_url=web_url)
     application.add_middleware(RequestLoggingMiddleware)
+    if setup_telemetry():
+        instrument_app(application)
     return application
 
 
