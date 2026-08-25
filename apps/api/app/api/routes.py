@@ -66,6 +66,7 @@ from ..persistence.points import (
     InsufficientPointsError,
     ensure_organization_account,
     ensure_user_account,
+    release_in_session,
     reserve_in_session,
 )
 from ..persistence.store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
@@ -886,9 +887,9 @@ async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
     async with store.sessions().begin() as session:
         invitation = (
             await session.execute(
-                select(Invitation).where(
-                    Invitation.token_hash == sha256(token.encode()).hexdigest()
-                )
+                select(Invitation)
+                .where(Invitation.token_hash == sha256(token.encode()).hexdigest())
+                .with_for_update()
             )
         ).scalar_one_or_none()
         job = await session.get(Job, invitation.job_id) if invitation else None
@@ -916,10 +917,12 @@ async def redeem_invitation_passcode(
     async with store.sessions().begin() as session:
         invitation = (
             await session.execute(
-                select(Invitation).where(
+                select(Invitation)
+                .where(
                     Invitation.passcode_hash
                     == sha256(input_data.passcode.strip().upper().encode()).hexdigest()
                 )
+                .with_for_update()
             )
         ).scalar_one_or_none()
         job = await session.get(Job, invitation.job_id) if invitation else None
@@ -966,18 +969,22 @@ async def upload_resume(
                 raise APIError(403, "FORBIDDEN", "Candidate account required")
             invitation = (
                 await session.execute(
-                    select(Invitation).where(
+                    select(Invitation)
+                    .where(
                         Invitation.token_hash == sha256(invitation_token.encode()).hexdigest()
                     )
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if invitation is None:
                 invitation = (
                     await session.execute(
-                        select(Invitation).where(
+                        select(Invitation)
+                        .where(
                             Invitation.passcode_hash
                             == sha256(invitation_token.strip().upper().encode()).hexdigest()
                         )
+                        .with_for_update()
                     )
                 ).scalar_one_or_none()
             if not application_is_open(job):
@@ -1406,6 +1413,10 @@ async def delete_independent_evaluation(evaluation_id: str, request: Request) ->
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
+        if evaluation.point_reservation_id is not None:
+            # Cancelling a queued evaluation must not strand its point hold;
+            # release is a no-op once the worker has already settled it.
+            await release_in_session(session, evaluation.point_reservation_id)
         storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
         for storage_key in independent_evaluation_storage_keys(evaluation):
             storage.delete(storage_key)
