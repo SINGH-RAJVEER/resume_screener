@@ -1629,3 +1629,37 @@ p {
 		grid-template-columns: 1fr;
 	}
 }
+
+.billing-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.5rem;
+	font-size: 0.8125rem;
+	opacity: 0.85;
+	padding-bottom: 0.25rem;
+}
+
+.pack-purchase {
+	border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+	margin-top: 1rem;
+	padding-top: 1rem;
+}
+
+.pack-purchase h3 {
+	margin: 0;
+}
+
+.pack-list {
+	display: grid;
+	gap: 0.5rem;
+	list-style: none;
+	margin: 0.75rem 0 0;
+	padding: 0;
+}
+
+.pack-list li {
+	align-items: center;
+	display: flex;
+	gap: 1rem;
+	justify-content: space-between;
+}

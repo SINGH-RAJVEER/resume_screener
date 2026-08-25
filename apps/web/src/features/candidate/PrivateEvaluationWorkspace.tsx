@@ -5,10 +5,12 @@ import { Textarea } from "@skillsignal/ui/components/textarea";
 import { AlertTriangle, FileDown, FileSearch, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
+import { BillingStrip, PackPurchase, usePointsSummary } from "./BillingPanel";
 import {
 	candidateClient,
 	type EmploymentFact,
 	type IndependentEvaluation,
+	type PointPack,
 } from "./client";
 
 const PROCESSING_STEPS = [
@@ -38,8 +40,18 @@ export const PrivateEvaluationWorkspace = () => {
 	>([]);
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
+	const [packs, setPacks] = useState<PointPack[]>([]);
+	const [showPurchase, setShowPurchase] = useState(false);
+	const { points, quote, refreshPoints } = usePointsSummary();
 	const historyIsUnavailable =
 		historyError !== null && privateHistory.length === 0;
+
+	useEffect(() => {
+		candidateClient
+			.packs()
+			.then(setPacks)
+			.catch(() => setPacks([]));
+	}, []);
 
 	const loadPrivateHistory = useCallback(async () => {
 		setHistoryError(null);
@@ -103,12 +115,21 @@ export const PrivateEvaluationWorkspace = () => {
 			setJobDescription("");
 			setJobDescriptionFile(null);
 			setFileInputKey((key) => key + 1);
+			setShowPurchase(false);
+			refreshPoints();
 		} catch (reason) {
-			setError(
+			const message =
 				reason instanceof Error
 					? reason.message
-					: "Resume check could not start",
-			);
+					: "Resume check could not start";
+			setError(message);
+			if (message.includes("points")) {
+				setShowPurchase(true);
+				candidateClient
+					.packs()
+					.then(setPacks)
+					.catch(() => undefined);
+			}
 		} finally {
 			setIsWorking(false);
 		}
@@ -178,6 +199,7 @@ export const PrivateEvaluationWorkspace = () => {
 						className="candidate-form"
 						onSubmit={startPrivateEvaluation}
 					>
+						<BillingStrip points={points} quote={quote} />
 						<div className="form-field">
 							<Label htmlFor="private-resume">
 								Resume document
@@ -250,6 +272,29 @@ export const PrivateEvaluationWorkspace = () => {
 						{error}
 					</p>
 				)}
+				{showPurchase && (
+					<PackPurchase
+						onPurchased={() => {
+							setShowPurchase(false);
+							setError(null);
+							refreshPoints();
+						}}
+						packs={packs}
+					/>
+				)}
+				{!showPurchase &&
+					points &&
+					points.allowance?.freeUsedThisWeek && (
+						<p className="form-hint">
+							<Button
+								onClick={() => setShowPurchase(true)}
+								size="sm"
+								variant="outline"
+							>
+								Buy points
+							</Button>
+						</p>
+					)}
 			</section>
 
 			<aside

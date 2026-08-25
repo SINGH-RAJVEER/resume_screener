@@ -379,3 +379,63 @@ export const workspaceClient = {
 			{ method: "DELETE" },
 		),
 };
+
+export interface PointPack {
+	id: string;
+	points: number;
+	amountInr: number;
+}
+
+export interface OrgPoints {
+	scope: string;
+	organizationId?: string;
+	balance: number;
+	available: number;
+	enterprise?: boolean;
+}
+
+export interface OrderResponse {
+	id: string;
+	razorpayOrderId: string;
+	razorpayKeyId: string;
+	amountInr: number;
+	currency: string;
+	packId: string;
+	points: number;
+}
+
+export const billingClient = {
+	orgPoints: (organizationId: string) =>
+		request<OrgPoints>(
+			`/api/me/points?organization_id=${encodeURIComponent(organizationId)}`,
+		),
+	packs: () => request<PointPack[]>("/api/billing/packs"),
+	createOrder: (packId: string, organizationId: string) =>
+		request<OrderResponse>("/api/billing/orders", {
+			method: "POST",
+			body: JSON.stringify({
+				pack_id: packId,
+				organization_id: organizationId,
+			}),
+		}),
+	verifyCheckout: (
+		orderId: string,
+		razorpayPaymentId: string,
+		razorpaySignature: string,
+	) =>
+		request<{ verified: boolean }>(
+			`/api/billing/orders/${orderId}/verify`,
+			{
+				method: "POST",
+				body: JSON.stringify({
+					razorpay_payment_id: razorpayPaymentId,
+					razorpay_signature: razorpaySignature,
+				}),
+			},
+		),
+	reconcile: (orderId: string) =>
+		request<{ payments: Array<Record<string, unknown>> }>(
+			`/api/billing/orders/${orderId}/reconcile`,
+			{ method: "POST" },
+		),
+};

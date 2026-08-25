@@ -76,6 +76,30 @@ export const candidateClient = {
 				body: JSON.stringify({ passcode }),
 			},
 		),
+	points: () => request<PointsSummary>("/api/me/points"),
+	packs: () => request<PointPack[]>("/api/billing/packs"),
+	quote: () =>
+		request<PointQuote>("/api/billing/quote?kind=independent_evaluation"),
+	createOrder: (packId: string) =>
+		request<OrderResponse>("/api/billing/orders", {
+			method: "POST",
+			body: JSON.stringify({ pack_id: packId }),
+		}),
+	verifyCheckout: (
+		orderId: string,
+		razorpayPaymentId: string,
+		razorpaySignature: string,
+	) =>
+		request<{ verified: boolean }>(
+			`/api/billing/orders/${orderId}/verify`,
+			{
+				method: "POST",
+				body: JSON.stringify({
+					razorpay_payment_id: razorpayPaymentId,
+					razorpay_signature: razorpaySignature,
+				}),
+			},
+		),
 	uploadInvitedResume: (jobId: string, token: string, file: File) => {
 		const body = new FormData();
 		body.append("file", file);
@@ -86,6 +110,40 @@ export const candidateClient = {
 			evaluationId: string;
 		}>(`/api/jobs/${jobId}/resumes`, { method: "POST", body });
 	},
+};
+
+export type PointPack = { id: string; points: number; amountInr: number };
+
+export type OrderResponse = {
+	id: string;
+	razorpayOrderId: string;
+	razorpayKeyId: string;
+	amountInr: number;
+	currency: string;
+	packId: string;
+	points: number;
+};
+
+export type PointsSummary = {
+	scope: string;
+	balance: number;
+	available: number;
+	allowance?: {
+		freeUsedThisWeek: boolean;
+		resetsAt: string;
+	};
+};
+
+export type PointQuote = {
+	kind: string;
+	points: number;
+	minimumPoints: number;
+	costCeilingPoints: number;
+	lineItems: Array<{
+		task: string;
+		maxInputTokens: number;
+		maxOutputTokens: number;
+	}>;
 };
 
 export type SkillFact = {

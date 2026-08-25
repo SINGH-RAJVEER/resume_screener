@@ -20,6 +20,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { authClient } from "../../lib/auth-client";
 import {
+	billingClient,
 	type Evaluation,
 	type EvaluationFilters,
 	EXPORT_COLUMNS,
@@ -29,9 +30,24 @@ import {
 	type JoinPolicy,
 	type Member,
 	type Organization,
+	type OrgPoints,
+	type PointPack,
 	type Requirement,
 	workspaceClient,
 } from "./client";
+
+type RazorpayCheckout = { open: () => void };
+
+type RazorpayHandlerResponse = {
+	razorpay_payment_id: string;
+	razorpay_signature: string;
+};
+
+declare global {
+	interface Window {
+		Razorpay?: new (options: Record<string, unknown>) => RazorpayCheckout;
+	}
+}
 
 type TabName = "results" | "criteria" | "upload";
 
@@ -46,6 +62,8 @@ type Invitation = {
 };
 
 type WindowStatus = { label: string; className: string };
+
+const ENTERPRISE_SALES_EMAIL = "sales@skillsignal.app";
 
 const applicationStatus = (job: JobDetail): WindowStatus => {
 	if (!job.applicationOpensAt || !job.applicationClosesAt) {
@@ -165,6 +183,8 @@ export const Workspace = () => {
 	const [joinPolicy, setJoinPolicy] = useState<JoinPolicy | null>(null);
 	const [policyDomain, setPolicyDomain] = useState("");
 	const [policyEmail, setPolicyEmail] = useState("");
+	const [orgPoints, setOrgPoints] = useState<OrgPoints | null>(null);
+	const [orgPacks, setOrgPacks] = useState<PointPack[]>([]);
 	const [evaluationQuery, setEvaluationQuery] = useState("");
 	const [eligibilityFilter, setEligibilityFilter] =
 		useState<EligibilityFilter>("top");
@@ -535,6 +555,14 @@ export const Workspace = () => {
 			if (currentOrg?.role === "owner") {
 				setJoinPolicy(await workspaceClient.joinPolicy(organizationId));
 			}
+			billingClient
+				.orgPoints(organizationId)
+				.then(setOrgPoints)
+				.catch(() => setOrgPoints(null));
+			billingClient
+				.packs()
+				.then(setOrgPacks)
+				.catch(() => setOrgPacks([]));
 		} catch (reason) {
 			reportError(reason);
 		}
@@ -570,6 +598,53 @@ export const Workspace = () => {
 
 	const refreshJoinPolicy = async () => {
 		setJoinPolicy(await workspaceClient.joinPolicy(organizationId));
+	};
+
+	const buyOrgPoints = async (packId: string) => {
+		setError(null);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				if (window.Razorpay) return resolve();
+				const script = document.createElement("script");
+				script.src = "https://checkout.razorpay.com/v1/checkout.js";
+				script.onload = () => resolve();
+				script.onerror = () =>
+					reject(new Error("Payment checkout could not be loaded"));
+				document.head.appendChild(script);
+			});
+			const order = await billingClient.createOrder(
+				packId,
+				organizationId,
+			);
+			if (!window.Razorpay)
+				throw new Error("Payment checkout unavailable");
+			const checkout = new window.Razorpay({
+				key: order.razorpayKeyId,
+				order_id: order.razorpayOrderId,
+				amount: order.amountInr * 100,
+				currency: order.currency,
+				name: "SkillSignal organization points",
+				description: `${order.points} points`,
+				theme: { color: "#111111" },
+				handler: async (response: RazorpayHandlerResponse) => {
+					try {
+						await billingClient.verifyCheckout(
+							order.id,
+							response.razorpay_payment_id,
+							response.razorpay_signature,
+						);
+						setOrgPoints(
+							await billingClient.orgPoints(organizationId),
+						);
+					} catch (reason) {
+						reportError(reason);
+					}
+				},
+			});
+			checkout.open();
+		} catch (reason) {
+			reportError(reason);
+		}
 	};
 
 	const changeDefaultRole = async (
@@ -1439,6 +1514,67 @@ export const Workspace = () => {
 										Allow email
 									</Button>
 								</form>
+							</div>
+						)}
+						{orgPoints && (
+							<div className="join-policy">
+								<h4 className="join-policy-title">Points</h4>
+								<p className="muted-copy">
+									Evaluating one resume reserves up to the
+									quoted maximum from this balance.{" "}
+									{orgPoints.enterprise
+										? "An enterprise entitlement covers batch evaluations without points."
+										: "Contact sales for organization-wide enterprise access."}
+								</p>
+								<div className="member-row">
+									<span style={{ fontWeight: 600 }}>
+										{`${orgPoints.balance} points available`}
+									</span>
+								</div>
+								{currentOrg?.role === "owner" &&
+									orgPacks.length > 0 && (
+										<form className="member-form">
+											<select
+												aria-label="Point pack"
+												className="workspace-filter-select"
+												id="org-point-pack"
+												defaultValue={
+													orgPacks[0]?.id ?? ""
+												}
+											>
+												{orgPacks.map((pack) => (
+													<option
+														key={pack.id}
+														value={pack.id}
+													>{`${pack.points.toLocaleString()} points · ₹${pack.amountInr}`}</option>
+												))}
+											</select>
+											<Button
+												onClick={() => {
+													const select =
+														document.getElementById(
+															"org-point-pack",
+														) as HTMLSelectElement | null;
+													if (select)
+														void buyOrgPoints(
+															select.value,
+														);
+												}}
+												size="sm"
+												type="button"
+											>
+												Buy points
+											</Button>
+										</form>
+									)}
+								{!orgPoints.enterprise && (
+									<a
+										className="candidate-email"
+										href={`mailto:${ENTERPRISE_SALES_EMAIL}`}
+									>
+										Contact sales about enterprise access
+									</a>
+								)}
 							</div>
 						)}
 					</div>
