@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from secrets import token_urlsafe
+from secrets import compare_digest, token_urlsafe
 from typing import cast
 
 from fastapi import APIRouter, Query, Request
@@ -21,7 +21,6 @@ from ..billing.razorpay import (
     verify_checkout_signature,
     verify_webhook_signature,
 )
-from ..billing.settings import BillingSettings
 from ..core.http import APIError
 from ..documents.storage import LocalObjectStorage
 from ..persistence.models import (
@@ -218,7 +217,8 @@ async def verify_checkout(
         existing = (
             await session.execute(
                 select(RazorpayPayment.signature_verified).where(
-                    RazorpayPayment.razorpay_payment_id == input_data.razorpay_payment_id
+                    (RazorpayPayment.razorpay_payment_id == input_data.razorpay_payment_id)
+                    & (RazorpayPayment.order_row_id == order.id)
                 )
             )
         ).scalar_one_or_none()
@@ -609,7 +609,10 @@ async def admin_session(request: Request) -> AsyncSession:
 
     settings = request.app.state.settings
     token = request.headers.get("x-admin-token", "")
-    if not settings.billing.admin_token or token != settings.billing.admin_token:
+    if (
+        not settings.billing.admin_token
+        or not compare_digest(token, settings.billing.admin_token)
+    ):
         raise APIError(404, "NOT_FOUND", "Not found") from None
     store = require_sqlalchemy_store(request)
     return store.sessions()()
