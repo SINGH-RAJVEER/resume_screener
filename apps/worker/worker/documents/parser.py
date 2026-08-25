@@ -195,13 +195,26 @@ def pdf_page_fragments(page: object) -> list[PdfFragment]:
 def shown_text(operands: list[object]) -> str:
 	parts: list[str] = []
 	for operand in operands:
-		if isinstance(operand, str):
+		if isinstance(operand, bytes):
+			parts.append(decode_pdf_string(operand))
+		elif isinstance(operand, str):
 			parts.append(operand)
 		elif isinstance(operand, list):
 			for entry in cast(list[object], operand):
-				if isinstance(entry, str):
+				if isinstance(entry, bytes):
+					parts.append(decode_pdf_string(entry))
+				elif isinstance(entry, str):
 					parts.append(entry)
 	return "".join(parts)
+
+
+def decode_pdf_string(value: bytes) -> str:
+	# Show-text operands reach the visitor as raw bytes on current pypdf
+	# releases. UTF-16BE literals carry a BOM; unmarked literals use
+	# PDFDocEncoding, whose ASCII range matches latin-1.
+	if value.startswith(b"\xfe\xff"):
+		return value.decode("utf-16-be", errors="replace")
+	return value.decode("latin-1")
 
 
 def fragment_width(fragment: PdfFragment) -> float:
