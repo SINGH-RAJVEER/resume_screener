@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     JSON,
@@ -27,6 +27,9 @@ from ..domain.versions import (
 
 class Base(DeclarativeBase):
     pass
+
+
+INDEPENDENT_RETENTION_DAYS_DEFAULT = 30
 
 
 class User(Base):
@@ -687,6 +690,14 @@ class IndependentEvaluation(Base):
         ForeignKey("point_reservation.id", ondelete="SET NULL")
     )
     free_week_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The report and its documents become unreachable once this passes.
+    # Routes stamp this explicitly; the default only covers direct inserts.
+    retention_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC)
+        + timedelta(days=INDEPENDENT_RETENTION_DAYS_DEFAULT),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

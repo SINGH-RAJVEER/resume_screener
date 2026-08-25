@@ -1020,7 +1020,7 @@ async def upload_resume(
             media_type=validated.media_type,
             size_bytes=len(content),
             original_name=file.filename or "resume",
-            retention_date=datetime.now(UTC) + timedelta(days=90),
+            retention_date=await document_retention_date(session, job.organization_id),
         )
         version = ResumeVersion(
             id=new_id(),
@@ -1196,7 +1196,7 @@ async def queue_resume_batch(
             media_type=validated.media_type,
             size_bytes=len(entry.content),
             original_name=entry.name,
-            retention_date=datetime.now(UTC) + timedelta(days=90),
+            retention_date=await document_retention_date(session, job.organization_id),
         )
         version = ResumeVersion(
             id=new_id(),
@@ -1316,6 +1316,8 @@ async def create_independent_evaluation(
         job_description=job_text or None,
         job_description_key=job_description_key,
         job_description_media_type=job_description_media_type,
+        retention_date=datetime.now(UTC)
+        + timedelta(days=request.app.state.settings.independent_retention_days),
     )
     processing = ProcessingJob(
         id=new_id(),
@@ -1869,6 +1871,14 @@ def application_is_open(job: Job) -> bool:
         and job.application_closes_at is not None
         and job.application_opens_at <= now < job.application_closes_at
     )
+
+
+async def document_retention_date(session: AsyncSession, organization_id: str) -> datetime:
+    """Employer documents inherit the organization's configured window."""
+    days = await session.scalar(
+        select(Organization.retention_days).where(Organization.id == organization_id)
+    )
+    return datetime.now(UTC) + timedelta(days=days if days is not None else 90)
 
 
 def independent_evaluation_summary(evaluation: IndependentEvaluation) -> dict[str, object]:

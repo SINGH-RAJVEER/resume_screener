@@ -16,6 +16,8 @@ class Settings:
     jwt_secret: str
     jwt_ttl: timedelta
     storage_root: str = ".local-storage"
+    independent_retention_days: int = 30
+    retention_sweep_interval_seconds: int = 3600
     billing: BillingSettings = field(default_factory=BillingSettings)
 
 
@@ -27,12 +29,22 @@ def load_settings() -> Settings:
     jwt_ttl = parse_duration(ttl_text)
     if jwt_ttl <= timedelta(0):
         raise ValueError("JWT_TTL must be a positive duration")
+    independent_retention_days = int(
+        os.environ.get("INDEPENDENT_RETENTION_DAYS", "") or "30"
+    )
+    retention_sweep_interval = int(
+        os.environ.get("RETENTION_SWEEP_INTERVAL_SECONDS", "") or "3600"
+    )
+    if independent_retention_days <= 0 or retention_sweep_interval < 0:
+        raise ValueError("Retention settings must be positive")
     return Settings(
         database_url=load_database_url(),
         web_url=os.environ.get("WEB_URL", "") or "http://localhost:3000",
         jwt_secret=jwt_secret,
         jwt_ttl=jwt_ttl,
         storage_root=os.environ.get("STORAGE_ROOT", "") or ".local-storage",
+        independent_retention_days=independent_retention_days,
+        retention_sweep_interval_seconds=retention_sweep_interval,
         billing=load_billing_settings(),
     )
 

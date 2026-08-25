@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from secrets import token_urlsafe
 from typing import cast
 
@@ -20,7 +21,9 @@ from ..billing.razorpay import (
     verify_checkout_signature,
     verify_webhook_signature,
 )
+from ..billing.settings import BillingSettings
 from ..core.http import APIError
+from ..documents.storage import LocalObjectStorage
 from ..persistence.models import (
     OrganizationEntitlement,
     OrganizationMember,
@@ -37,6 +40,7 @@ from ..persistence.points import (
     ensure_user_account,
     grant_in_session,
 )
+from ..persistence.retention import purge_expired_data
 from .contracts import ERROR_RESPONSES
 from .routes import RequestModel, require_membership, require_sqlalchemy_store, require_user
 
@@ -581,6 +585,23 @@ async def revoke_entitlement(organization_id: str, request: Request) -> None:
         await session.commit()
     finally:
         await session.close()
+
+
+@router.post("/api/admin/retention/sweep")
+async def run_retention_sweep(request: Request) -> dict[str, int]:
+    """Operator trigger for one retention pass over expired resume data."""
+    session = await admin_session(request)
+    settings = request.app.state.settings
+    storage = LocalObjectStorage(Path(settings.storage_root))
+    try:
+        result = await purge_expired_data(session, storage, datetime.now(UTC))
+        await session.commit()
+    finally:
+        await session.close()
+    return {
+        "documentsPurged": result.documents_purged,
+        "independentEvaluationsPurged": result.independent_evaluations_purged,
+    }
 
 
 async def admin_session(request: Request) -> AsyncSession:
