@@ -274,31 +274,6 @@ export const workspaceClient = {
 			{ method: "POST", body },
 		);
 	},
-	uploadResumes: async (jobId: string, files: File[]) => {
-		const results = await Promise.allSettled(
-			files.map((file) => workspaceClient.uploadResume(jobId, file)),
-		);
-		return {
-			accepted: results.flatMap((result, index) =>
-				result.status === "fulfilled"
-					? [{ name: files[index]?.name ?? "resume" }]
-					: [],
-			),
-			rejected: results.flatMap((result, index) =>
-				result.status === "rejected"
-					? [
-							{
-								name: files[index]?.name ?? "resume",
-								reason:
-									result.reason instanceof Error
-										? result.reason.message
-										: "Upload failed",
-							},
-						]
-					: [],
-			),
-		};
-	},
 	uploadResumeBatch: (jobId: string, archive: File) => {
 		const body = new FormData();
 		body.append("archive", archive);
