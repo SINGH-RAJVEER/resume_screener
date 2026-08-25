@@ -261,7 +261,12 @@ async def test_deleting_a_paid_evaluation_releases_the_open_hold(tmp_path: Path)
 		released_states = (
 			(await store.sessions()().execute(select(PointReservation.state))).scalars().all()
 		)
-		retry = await upload_resume(client, headers)
+		retry = await client.post(
+			"/api/independent-evaluations",
+			data={},
+			files={"file": ("resume.txt", b"Resume text", "text/plain")},
+			headers=headers,
+		)
 		final_states = (
 			(await store.sessions()().execute(select(PointReservation.state))).scalars().all()
 		)

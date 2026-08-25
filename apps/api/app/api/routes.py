@@ -896,10 +896,7 @@ async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
         if (
             invitation is None
             or job is None
-            or not application_is_open(job)
-            or invitation.revoked_at is not None
-            or invitation.expires_at <= datetime.now(UTC)
-            or invitation.resume_submission_id is not None
+            or not invitation_is_redeemable(invitation, job)
         ):
             raise APIError(404, "NOT_FOUND", "Invitation is unavailable")
         if invitation.redeeming_user_id not in {None, user.id}:
@@ -929,10 +926,7 @@ async def redeem_invitation_passcode(
         if (
             invitation is None
             or job is None
-            or not application_is_open(job)
-            or invitation.revoked_at is not None
-            or invitation.expires_at <= datetime.now(UTC)
-            or invitation.resume_submission_id is not None
+            or not invitation_is_redeemable(invitation, job)
         ):
             raise APIError(404, "NOT_FOUND", "Invitation is unavailable")
         if invitation.redeeming_user_id not in {None, user.id}:
@@ -993,7 +987,7 @@ async def upload_resume(
                 invitation is None
                 or invitation.job_id != job.id
                 or invitation.redeeming_user_id != user.id
-                or invitation.expires_at <= datetime.now(UTC)
+                or as_utc(invitation.expires_at) <= datetime.now(UTC)
                 or invitation.revoked_at is not None
                 or invitation.resume_submission_id is not None
             ):
@@ -1864,13 +1858,32 @@ async def require_candidate(request: Request) -> UserRecord:
     return user
 
 
+def as_utc(value: datetime) -> datetime:
+	"""Timestamps read back from SQLite sessions are naive UTC; normalize
+	before comparing against clock values."""
+
+	return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def application_is_open(job: Job) -> bool:
-    now = datetime.now(UTC)
-    return (
-        job.application_opens_at is not None
-        and job.application_closes_at is not None
-        and job.application_opens_at <= now < job.application_closes_at
-    )
+	now = datetime.now(UTC)
+	return (
+		job.application_opens_at is not None
+		and job.application_closes_at is not None
+		and as_utc(job.application_opens_at) <= now < as_utc(job.application_closes_at)
+	)
+
+
+def invitation_is_redeemable(invitation: Invitation, job: Job) -> bool:
+	"""Shared guard for the redeem and invited-upload paths, which serialize
+	on the invitation row lock before reaching this check."""
+
+	return (
+		application_is_open(job)
+		and invitation.revoked_at is None
+		and as_utc(invitation.expires_at) > datetime.now(UTC)
+		and invitation.resume_submission_id is None
+	)
 
 
 async def document_retention_date(session: AsyncSession, organization_id: str) -> datetime:
