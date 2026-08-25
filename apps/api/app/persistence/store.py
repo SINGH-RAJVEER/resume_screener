@@ -40,6 +40,7 @@ class UserRecord:
     updated_at: datetime
     account_type: str = "candidate"
     email_verified: bool = False
+    is_demo: bool = False
     image: str | None = None
 
 
@@ -197,6 +198,7 @@ def _to_record(user: User) -> UserRecord:
         email=user.email,
         account_type=user.account_type,
         email_verified=user.email_verified,
+        is_demo=user.is_demo,
         image=user.image,
         created_at=user.created_at,
         updated_at=user.updated_at,

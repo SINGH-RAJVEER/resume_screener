@@ -41,7 +41,13 @@ from ..persistence.points import (
 )
 from ..persistence.retention import purge_expired_data
 from .contracts import ERROR_RESPONSES
-from .routes import RequestModel, require_membership, require_sqlalchemy_store, require_user
+from .routes import (
+    RequestModel,
+    require_membership,
+    require_mutating_user,
+    require_sqlalchemy_store,
+    require_user,
+)
 
 router = APIRouter(responses=ERROR_RESPONSES)
 
@@ -144,7 +150,7 @@ async def my_points(
 
 @router.post("/api/billing/orders", status_code=201)
 async def create_order(input_data: OrderRequest, request: Request) -> dict[str, object]:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     billing = request.app.state.settings.billing
     pack = billing.pack(input_data.pack_id)
@@ -209,7 +215,7 @@ async def verify_checkout(
     reconciliation move the ledger.
     """
 
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     billing = request.app.state.settings.billing
     async with store.sessions().begin() as session:
@@ -247,7 +253,7 @@ async def verify_checkout(
 async def reconcile_order(order_id: str, request: Request) -> dict[str, object]:
     """Pull authoritative payment state from Razorpay and apply missing grants."""
 
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     billing = request.app.state.settings.billing
     client = razorpay_client(billing)

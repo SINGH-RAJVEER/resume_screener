@@ -302,7 +302,7 @@ async def list_organizations(request: Request) -> list[dict[str, object]]:
 
 @router.post("/api/organizations", status_code=201)
 async def create_organization(input_data: OrganizationRequest, request: Request) -> dict[str, str]:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     organization = Organization(id=new_id(), name=input_data.name.strip())
     member = OrganizationMember(
@@ -355,7 +355,7 @@ async def add_organization_member(
 ) -> dict[str, str]:
     if input_data.role not in {"recruiter", "viewer"}:
         raise APIError(400, "INVALID_REQUEST", "Member role must be recruiter or viewer")
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -400,7 +400,7 @@ async def add_organization_member(
 async def remove_organization_member(
     organization_id: str, member_user_id: str, request: Request
 ) -> None:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -463,7 +463,7 @@ async def update_join_policy(
 ) -> dict[str, str]:
     if input_data.default_role not in {"recruiter", "viewer"}:
         raise APIError(400, "INVALID_REQUEST", "Default role must be recruiter or viewer")
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -482,7 +482,7 @@ async def add_join_policy_domain(
         domain = normalize_domain(input_data.domain)
     except InvalidDomainError as error:
         raise APIError(400, "INVALID_REQUEST", str(error)) from error
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -505,7 +505,7 @@ async def add_join_policy_domain(
 
 @router.delete("/api/organizations/{organization_id}/join-policy/domains/{domain}", status_code=204)
 async def remove_join_policy_domain(organization_id: str, domain: str, request: Request) -> None:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -531,7 +531,7 @@ async def add_join_policy_email(
     except CredentialValidationError as error:
         raise APIError(400, "INVALID_REQUEST", str(error)) from error
     email = input_data.email.strip().lower()
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -552,7 +552,7 @@ async def add_join_policy_email(
 
 @router.delete("/api/organizations/{organization_id}/join-policy/emails/{email}", status_code=204)
 async def remove_join_policy_email(organization_id: str, email: str, request: Request) -> None:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         await require_owner(session, organization_id, user.id)
@@ -609,7 +609,7 @@ async def create_job(
     description: str = Form(""),
     file: UploadFile | None = File(None),
 ) -> JobAcceptedResponse:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     file_content = await read_optional_upload(file)
     if file_content is not None and description.strip():
@@ -750,7 +750,7 @@ async def set_application_window(
         )
     if input_data.closes_at <= input_data.opens_at:
         raise APIError(400, "INVALID_REQUEST", "Application close must be after application open")
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         job = await session.get(Job, job_id)
@@ -769,7 +769,7 @@ async def set_application_window(
 async def confirm_requirements(
     job_id: str, input_data: RequirementConfirmationRequest, request: Request
 ) -> dict[str, bool]:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     allowed_kinds = {"required", "preferred", "ignored", "hard_gate"}
     if any(requirement.kind not in allowed_kinds for requirement in input_data.requirements):
@@ -853,7 +853,7 @@ async def create_invitation(
         raise APIError(
             400, "INVALID_REQUEST", "Invitation expiry must be between 1 hour and 30 days"
         )
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     token = token_urlsafe(32)
     async with store.sessions().begin() as session:
@@ -883,7 +883,7 @@ async def create_invitation(
 
 @router.post("/api/invitations/{token}/redeem")
 async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
-    user = await require_candidate(request)
+    user = await require_mutating_candidate(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         invitation = (
@@ -910,7 +910,7 @@ async def redeem_invitation(token: str, request: Request) -> dict[str, str]:
 async def redeem_invitation_passcode(
     input_data: InvitationPasscodeRequest, request: Request
 ) -> dict[str, str]:
-    user = await require_candidate(request)
+    user = await require_mutating_candidate(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         invitation = (
@@ -947,7 +947,7 @@ async def upload_resume(
     file: UploadFile = File(),
     invitation_token: str = Form(""),
 ) -> dict[str, str]:
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     content = await file.read()
     try:
@@ -1088,7 +1088,7 @@ async def upload_resume_batch(
     job_id: str, request: Request, archive: UploadFile = File()
 ) -> dict[str, object]:
     """Queue each valid ZIP entry independently, reporting unsafe entries without storing them."""
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     if archive.content_type not in {"application/zip", "application/x-zip-compressed"}:
         raise APIError(400, "INVALID_DOCUMENT", "Resume batch must be a ZIP file")
@@ -1122,7 +1122,7 @@ async def upload_resume_file_batch(
     job_id: str, request: Request, files: list[UploadFile] = File()
 ) -> dict[str, object]:
     """Queue each valid upload independently, reporting invalid files without storing them."""
-    user = await require_user(request)
+    user = await require_mutating_user(request)
     store = require_sqlalchemy_store(request)
     payloads = [(file.filename, await file.read()) for file in files]
     try:
@@ -1267,7 +1267,7 @@ async def create_independent_evaluation(
     job_description: str = Form(""),
     job_description_file: UploadFile | None = File(None),
 ) -> IndependentEvaluationAcceptedResponse:
-    user = await require_candidate(request)
+    user = await require_mutating_candidate(request)
     store = require_sqlalchemy_store(request)
     content = await file.read()
     try:
@@ -1406,7 +1406,7 @@ async def download_improved_resume(evaluation_id: str, request: Request) -> Resp
 
 @router.delete("/api/independent-evaluations/{evaluation_id}", status_code=204)
 async def delete_independent_evaluation(evaluation_id: str, request: Request) -> None:
-    user = await require_candidate(request)
+    user = await require_mutating_candidate(request)
     store = require_sqlalchemy_store(request)
     async with store.sessions().begin() as session:
         evaluation = await owned_independent_evaluation(session, evaluation_id, user.id)
@@ -1849,6 +1849,28 @@ async def require_user(request: Request) -> UserRecord:
     user = await authenticated_user(request)
     if user is None:
         raise APIError(401, "UNAUTHORIZED", "Unauthorized")
+    return user
+
+
+DEMO_READ_ONLY_MESSAGE = (
+    "This is the shared guided-demo account, so it cannot change data."
+    " Create your own account to run real evaluations."
+)
+
+
+async def require_mutating_user(request: Request) -> UserRecord:
+    """Guard shared demo accounts away from every state-changing command."""
+
+    user = await require_user(request)
+    if user.is_demo:
+        raise APIError(403, "DEMO_ACCOUNT", DEMO_READ_ONLY_MESSAGE)
+    return user
+
+
+async def require_mutating_candidate(request: Request) -> UserRecord:
+    user = await require_mutating_user(request)
+    if user.account_type != "candidate":
+        raise APIError(403, "FORBIDDEN", "A candidate account is required")
     return user
 
 
