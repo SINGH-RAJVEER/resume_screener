@@ -14,6 +14,11 @@ from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .billing import (
+	release_evaluation_reservations,
+	settle_points,
+	settle_reservation,
+)
 from .config import WorkerSettings, load_settings
 from .documents.parser import DocumentParseError
 from .documents.processing import (
@@ -119,6 +124,8 @@ class Worker:
 			return False
 		started = time.monotonic()
 		outcome = "completed"
+		if self._openrouter is not None:
+			self._openrouter.reset_usage()
 		with tracer.start_as_current_span(
 			"process_job",
 			attributes={
@@ -322,6 +329,28 @@ class Worker:
 					),
 					{"quality_state": quality_state, "version_id": job.payload_reference},
 				)
+				# Parsing and review delivery happened even without scoring,
+				# so employer holds settle at the minimum charge.
+				holds = await connection.execute(
+					text(
+						"""
+						SELECT id FROM point_reservation
+						WHERE state = 'reserved' AND id IN (
+							SELECT point_reservation_id FROM evaluation
+							WHERE resume_version_id = :version_id
+								AND point_reservation_id IS NOT NULL
+						)
+						"""
+					),
+					{"version_id": job.payload_reference},
+				)
+				for hold in holds.scalars():
+					await settle_reservation(
+						connection,
+						str(hold),
+						self._settings.billing.minimum_employer_resume_points,
+						"Employer resume charge (review required)",
+					)
 				return True
 			contact = normalized_facts["contact"]
 			if not isinstance(contact, Mapping):
@@ -684,7 +713,7 @@ class Worker:
 		else:
 			self._write_object(improved_key, document)
 		async with self._engine.begin() as connection:
-			await connection.execute(
+			result = await connection.execute(
 				text(
 					"""
 					UPDATE independent_evaluation
@@ -706,6 +735,7 @@ class Worker:
 							WHERE id = :job_id AND lease_token = :lease_token
 								AND lease_expires_at > now()
 						)
+					RETURNING point_reservation_id, free_week_start
 					"""
 				),
 				{
@@ -726,6 +756,26 @@ class Worker:
 					"scoring_policy_version": SCORING_POLICY_VERSION,
 				},
 			)
+			billing_row = result.mappings().one_or_none()
+			if billing_row is not None and billing_row["point_reservation_id"]:
+				prompt_tokens, completion_tokens, cost_usd = self._model_usage()
+				await settle_reservation(
+					connection,
+					str(billing_row["point_reservation_id"]),
+					settle_points(
+						prompt_tokens,
+						completion_tokens,
+						cost_usd,
+						"independent_evaluation",
+						self._settings.billing,
+					),
+					"Independent evaluation charge",
+				)
+
+	def _model_usage(self) -> tuple[int, int, float]:
+		if self._openrouter is None:
+			return 0, 0, 0.0
+		return self._openrouter.usage()
 
 	async def _prepare_bounded(self, content: bytes, media_type: str) -> PreparedDocument:
 		try:
@@ -931,6 +981,29 @@ class Worker:
 					),
 				},
 			)
+			reservation = (
+				await connection.execute(
+					text(
+						"SELECT point_reservation_id FROM evaluation "
+						"WHERE id = :evaluation_id AND point_reservation_id IS NOT NULL"
+					),
+					{"evaluation_id": job.payload_reference},
+				)
+			).scalar_one_or_none()
+			if reservation:
+				prompt_tokens, completion_tokens, cost_usd = self._model_usage()
+				await settle_reservation(
+					connection,
+					str(reservation),
+					settle_points(
+						prompt_tokens,
+						completion_tokens,
+						cost_usd,
+						"employer_resume",
+						self._settings.billing,
+					),
+					"Employer resume charge",
+				)
 
 	async def _retrieve_semantic_evidence(
 		self,
@@ -1017,6 +1090,33 @@ class Worker:
 					),
 					{"evaluation_id": job.payload_reference, "safe_error": error},
 				)
+				# Failed evaluations release the point hold and return a
+				# consumed weekly free allowance so it can be used again.
+				await connection.execute(
+					text(
+						"""
+						UPDATE point_reservation SET state = 'released', updated_at = now()
+						WHERE state = 'reserved'
+							AND id = (
+								SELECT point_reservation_id FROM independent_evaluation
+								WHERE id = :evaluation_id
+							)
+						"""
+					),
+					{"evaluation_id": job.payload_reference},
+				)
+				await connection.execute(
+					text(
+						"""
+						DELETE FROM weekly_free_use
+						WHERE (user_id, week_start) IN (
+							SELECT user_id, free_week_start FROM independent_evaluation
+							WHERE id = :evaluation_id AND free_week_start IS NOT NULL
+						)
+						"""
+					),
+					{"evaluation_id": job.payload_reference},
+				)
 		elif job.type == "resume_processing":
 			async with self._engine.begin() as connection:
 				await connection.execute(
@@ -1047,6 +1147,11 @@ class Worker:
 					),
 					{"version_id": job.payload_reference},
 				)
+				await release_evaluation_reservations(
+					connection,
+					"resume_version_id = :version_id",
+					{"version_id": job.payload_reference},
+				)
 		elif job.type == "evaluation_processing":
 			async with self._engine.begin() as connection:
 				await connection.execute(
@@ -1058,6 +1163,9 @@ class Worker:
 						"""
 					),
 					{"evaluation_id": job.payload_reference},
+				)
+				await release_evaluation_reservations(
+					connection, "id = :evaluation_id", {"evaluation_id": job.payload_reference}
 				)
 
 	async def _update_job(

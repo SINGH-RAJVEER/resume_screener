@@ -3,6 +3,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .billing import BillingSettings
+
 
 @dataclass(frozen=True)
 class OpenRouterSettings:
@@ -23,6 +25,7 @@ class WorkerSettings:
 	lease_seconds: int
 	parse_timeout_seconds: float
 	openrouter: OpenRouterSettings
+	billing: BillingSettings = BillingSettings()
 
 	@property
 	def llm_enabled(self) -> bool:
@@ -58,4 +61,19 @@ def load_settings() -> WorkerSettings:
 		lease_seconds=lease_seconds,
 		parse_timeout_seconds=parse_timeout,
 		openrouter=openrouter,
+		billing=BillingSettings(
+			points_per_usd=int(os.environ.get("POINTS_PER_USD") or "1000"),
+			minimum_independent_evaluation_points=int(
+				os.environ.get("MIN_POINTS_INDEPENDENT_EVALUATION") or "10"
+			),
+			minimum_employer_resume_points=int(
+				os.environ.get("MIN_POINTS_EMPLOYER_RESUME") or "5"
+			),
+			price_ceiling_usd_per_million_input=float(
+				os.environ.get("PRICE_CEILING_INPUT_USD_PER_MILLION") or "3.0"
+			),
+			price_ceiling_usd_per_million_output=float(
+				os.environ.get("PRICE_CEILING_OUTPUT_USD_PER_MILLION") or "15.0"
+			),
+		),
 	)

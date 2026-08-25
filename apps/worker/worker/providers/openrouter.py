@@ -1,5 +1,5 @@
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 import httpx
@@ -38,6 +38,37 @@ class OpenRouterClient:
 			"Content-Type": "application/json",
 			"X-Title": "skillsignal",
 		}
+		self._accumulated_prompt_tokens = 0
+		self._accumulated_completion_tokens = 0
+		self._accumulated_cost_usd = 0.0
+
+	def reset_usage(self) -> None:
+		"""Clear per-job usage accumulation before dispatching a job."""
+
+		self._accumulated_prompt_tokens = 0
+		self._accumulated_completion_tokens = 0
+		self._accumulated_cost_usd = 0.0
+
+	def usage(self) -> tuple[int, int, float]:
+		return (
+			self._accumulated_prompt_tokens,
+			self._accumulated_completion_tokens,
+			self._accumulated_cost_usd,
+		)
+
+	def _record_usage(self, body: Mapping[str, object]) -> None:
+		usage = body.get("usage")
+		if not isinstance(usage, Mapping):
+			return
+		prompt = usage.get("prompt_tokens")
+		completion = usage.get("completion_tokens")
+		cost = usage.get("cost")
+		if isinstance(prompt, (int, float)):
+			self._accumulated_prompt_tokens += int(prompt)
+		if isinstance(completion, (int, float)):
+			self._accumulated_completion_tokens += int(completion)
+		if isinstance(cost, (int, float)):
+			self._accumulated_cost_usd += float(cost)
 
 	async def complete_json(
 		self,
@@ -102,6 +133,7 @@ class OpenRouterClient:
 		# OpenRouter can report upstream failures inside HTTP 200.
 		if isinstance(body.get("error"), dict):
 			raise classify_error(cast(dict[str, object], body["error"]))
+		self._record_usage(body)
 		return body
 
 
