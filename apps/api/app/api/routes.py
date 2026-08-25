@@ -23,6 +23,7 @@ from ..auth import (
 )
 from ..billing.allowance import claim_free_week
 from ..billing.quotes import EMPLOYER_QUOTE, INDEPENDENT_QUOTE, point_quote
+from ..billing.settings import BillingSettings
 from ..core.http import APIError
 from ..documents.ingestion import (
     BatchEntry,
@@ -2039,7 +2040,7 @@ async def reserve_for_employer_evaluation(
     session: AsyncSession,
     organization_id: str,
     evaluation: Evaluation,
-    billing: object,
+    billing: BillingSettings,
 ) -> None:
     """Employers fund evaluations from the organization account unless a
     manually provisioned enterprise entitlement covers the organization."""
