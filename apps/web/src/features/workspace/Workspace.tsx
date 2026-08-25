@@ -63,7 +63,8 @@ type Invitation = {
 
 type WindowStatus = { label: string; className: string };
 
-const ENTERPRISE_SALES_EMAIL = "sales@skillsignal.app";
+const ENTERPRISE_SALES_EMAIL =
+	import.meta.env.VITE_ENTERPRISE_SALES_EMAIL ?? "sales@skillsignal.app";
 
 const applicationStatus = (job: JobDetail): WindowStatus => {
 	if (!job.applicationOpensAt || !job.applicationClosesAt) {

@@ -101,6 +101,7 @@ services:
             dockerfile: apps/web/Dockerfile
             args:
                 VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+                VITE_ENTERPRISE_SALES_EMAIL: ${VITE_ENTERPRISE_SALES_EMAIL:-}
         restart: unless-stopped
         ports:
             - "3000:3000"

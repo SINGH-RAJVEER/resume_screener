@@ -28,9 +28,10 @@ What works today:
   OpenRouter fact extraction, per-requirement assessment with cited evidence,
   weighted scores, hard-gate eligibility, CSV export.
 
-What is not built yet: billing and point ledgers, embeddings and semantic
-retrieval, retention/deletion scheduling, and calibration against labeled data.
-The specs in `docs/specs/` describe the full intended product.
+What is not built yet: retention and deletion scheduling, the employer
+review-decision screen, full cost and latency telemetry, and calibration
+against labeled data. The specs in `docs/specs/` describe the full intended
+product.
 
 ## Layout
 
@@ -75,8 +76,8 @@ docker compose up --build
 
 The API container applies migrations on startup. When everything is up:
 web at http://localhost:3000, API at http://localhost:8000 (health check at
-`/health`). Uploaded files live in the `resume_storage` volume, which the
-worker mounts read-only.
+`/health`). Uploaded files live in the `resume_storage` volume; the worker
+mounts it read-write because it renders corrected resumes back into storage.
 
 ## Run locally
 

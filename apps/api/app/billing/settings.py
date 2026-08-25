@@ -50,7 +50,7 @@ class BillingSettings:
 	razorpay_key_secret: str = ""
 	razorpay_webhook_secret: str = ""
 	admin_token: str = ""
-	enterprise_sales_email: str = "sales@example.com"
+	enterprise_sales_email: str = "sales@skillsignal.app"
 
 	def pack(self, pack_id: str) -> RazorpayPack | None:
 		for pack in self.packs:
@@ -112,7 +112,7 @@ def load_billing_settings() -> BillingSettings:
 		razorpay_webhook_secret=os.environ.get("RAZORPAY_WEBHOOK_SECRET", ""),
 		admin_token=os.environ.get("ADMIN_TOKEN", ""),
 		enterprise_sales_email=os.environ.get("ENTERPRISE_SALES_EMAIL")
-		or "sales@example.com",
+		or "sales@skillsignal.app",
 	)
 
 
