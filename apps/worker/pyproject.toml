@@ -22,6 +22,10 @@ dev = [
 	"pytest-asyncio>=1.1.0",
 	"ruff>=0.12.9",
 ]
+benchmark = [
+	"pdfminer-six>=20260107",
+	"pymupdf>=1.28.2",
+]
 
 [tool.pyright]
 include = ["worker", "tests"]

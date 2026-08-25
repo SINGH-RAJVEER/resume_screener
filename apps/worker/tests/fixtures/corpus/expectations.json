@@ -1,0 +1,6 @@
+{
+	"single-column.pdf": "parse",
+	"two-column.pdf": "parse",
+	"mixed-empty-page.pdf": "parse",
+	"scanned.pdf": "reject"
+}

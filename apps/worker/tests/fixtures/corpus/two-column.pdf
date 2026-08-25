@@ -1,0 +1,69 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (pypdf)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/Resources <<
+/Font <<
+/F1 <<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+>>
+>>
+>>
+/MediaBox [ 0.0 0.0 612 792 ]
+/Parent 2 0 R
+/Contents 5 0 R
+>>
+endobj
+5 0 obj
+<<
+/Length 463
+>>
+stream
+BT /F1 12 Tf 320 740 Td (SKILLS) Tj ET
+BT /F1 12 Tf 320 720 Td (Python, Kubernetes, PostgreSQL.) Tj ET
+BT /F1 12 Tf 320 700 Td (EDUCATION) Tj ET
+BT /F1 12 Tf 320 680 Td (BSc Computer Science.) Tj ET
+BT /F1 12 Tf 72 740 Td (ADA LOVELACE) Tj ET
+BT /F1 12 Tf 72 720 Td (Senior Platform Engineer at Example Corp.) Tj ET
+BT /F1 12 Tf 72 700 Td (Built Python services and operated clusters.) Tj ET
+BT /F1 12 Tf 72 680 Td (Led the platform team from 2020 to 2025.) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000054 00000 n 
+0000000113 00000 n 
+0000000162 00000 n 
+0000000343 00000 n 
+trailer
+<<
+/Size 6
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+857
+%%EOF
