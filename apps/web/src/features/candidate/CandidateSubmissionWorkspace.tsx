@@ -86,6 +86,7 @@ export const CandidateSubmissionWorkspace = () => {
 		<section
 			className="candidate-submission"
 			aria-labelledby="submission-title"
+			data-tour="submission-form"
 		>
 			<header className="candidate-action-heading">
 				<KeyRound aria-hidden />

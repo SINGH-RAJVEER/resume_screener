@@ -38,7 +38,11 @@ export const UploadTab = ({
 			</div>
 		)}
 
-		<form className="upload-panel" onSubmit={onSubmit}>
+		<form
+			className="upload-panel"
+			data-tour="upload-panel"
+			onSubmit={onSubmit}
+		>
 			<h3>Queue resume submissions</h3>
 
 			<div className="form-field">
@@ -113,7 +117,9 @@ export const UploadTab = ({
 				</div>
 
 				<p className="form-hint">
-					Choose PDF, DOCX, TXT, ZIP files, or an entire folder. Unsupported files are reported individually and candidate names come from the resumes.
+					Choose PDF, DOCX, TXT, ZIP files, or an entire folder.
+					Unsupported files are reported individually and candidate
+					names come from the resumes.
 				</p>
 			</div>
 

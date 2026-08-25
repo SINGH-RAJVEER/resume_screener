@@ -12,6 +12,7 @@ import {
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { authClient } from "../../lib/auth-client";
+import { useRegisterTourActions } from "../tour/TourProvider";
 import {
 	type Evaluation,
 	type EvaluationFilters,
@@ -92,6 +93,22 @@ export const Workspace = () => {
 		setIsExportOpen(false);
 		setInspectingEvaluation(null);
 	}, []);
+
+	// Imperative handles for the landing-page guided demo; re-registered on
+	// every render so closures always see current state.
+	useRegisterTourActions("workspace", {
+		closeOverlays,
+		openEvidence: (evaluationId) => {
+			const found = evaluations.find(
+				(evaluation) => evaluation.id === evaluationId,
+			);
+			if (found) setInspectingEvaluation(found);
+		},
+		openExport: () => setIsExportOpen(true),
+		openMembers: () => setIsMembersOpen(true),
+		openTab: setActiveTab,
+		showAllCandidates: () => setEligibilityFilter("all"),
+	});
 
 	const refreshEvaluations = useCallback(
 		async (jobId: string) => {
@@ -476,7 +493,11 @@ export const Workspace = () => {
 							value={jobSearch}
 						/>
 					</div>
-					<nav aria-label="Roles" className="role-list">
+					<nav
+						aria-label="Roles"
+						className="role-list"
+						data-tour="role-library"
+					>
 						{filteredJobs.map((job) => (
 							<button
 								key={job.id}

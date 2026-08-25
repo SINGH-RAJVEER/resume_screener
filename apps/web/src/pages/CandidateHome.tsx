@@ -3,6 +3,7 @@ import { ClipboardCheck, FileSearch } from "lucide-react";
 import { useState } from "react";
 import { CandidateSubmissionWorkspace } from "../features/candidate/CandidateSubmissionWorkspace";
 import { PrivateEvaluationWorkspace } from "../features/candidate/PrivateEvaluationWorkspace";
+import { useRegisterTourActions } from "../features/tour/TourProvider";
 import { authClient } from "../lib/auth-client";
 
 type CandidateTask = "private-check" | "job-submission";
@@ -10,6 +11,9 @@ type CandidateTask = "private-check" | "job-submission";
 export const CandidateHome = () => {
 	const { data: session } = authClient.useSession();
 	const [task, setTask] = useState<CandidateTask>("private-check");
+	useRegisterTourActions("candidate-home", {
+		openTask: setTask,
+	});
 
 	return (
 		<main className="candidate-page">

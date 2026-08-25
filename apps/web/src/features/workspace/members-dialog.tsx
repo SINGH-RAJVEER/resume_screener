@@ -224,7 +224,7 @@ export const MembersDialog = ({
 				onDismiss,
 			})}
 		>
-			<div className="modal-panel">
+			<div className="modal-panel" data-tour="members-dialog">
 				<div className="modal-head-row">
 					<h3 id="members-title">Members · {organization.name}</h3>
 					<button

@@ -5,6 +5,7 @@ import { Textarea } from "@skillsignal/ui/components/textarea";
 import { AlertTriangle, FileDown, FileSearch, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
+import { useRegisterTourActions } from "../tour/TourProvider";
 import { BillingStrip, PackPurchase, usePointsSummary } from "./BillingPanel";
 import {
 	candidateClient,
@@ -45,6 +46,14 @@ export const PrivateEvaluationWorkspace = () => {
 	const { points, quote, refreshPoints } = usePointsSummary();
 	const historyIsUnavailable =
 		historyError !== null && privateHistory.length === 0;
+
+	// Guided-demo handles; re-registered every render for fresh closures.
+	useRegisterTourActions("private-evaluation", {
+		closeReport: () => setPrivateEvaluation(null),
+		openReport: (evaluationId) => {
+			void openPrivateEvaluation(evaluationId);
+		},
+	});
 
 	useEffect(() => {
 		candidateClient
@@ -197,6 +206,7 @@ export const PrivateEvaluationWorkspace = () => {
 				) : (
 					<form
 						className="candidate-form"
+						data-tour="candidate-form"
 						onSubmit={startPrivateEvaluation}
 					>
 						<BillingStrip points={points} quote={quote} />
@@ -299,6 +309,7 @@ export const PrivateEvaluationWorkspace = () => {
 
 			<aside
 				className="candidate-history"
+				data-tour="candidate-history"
 				aria-labelledby="history-title"
 			>
 				<header>
@@ -515,7 +526,10 @@ const PrivateReport = ({
 	const warnings = facts.warnings ?? [];
 
 	return (
-		<article className="private-report report-preview">
+		<article
+			className="private-report report-preview"
+			data-tour="report-preview"
+		>
 			<header>
 				<div>
 					<span>{evaluation.originalName}</span>
@@ -621,6 +635,7 @@ const PrivateReport = ({
 			<footer className="report-actions">
 				{evaluation.hasImprovedResume && (
 					<Button
+						data-tour="download-corrected"
 						onClick={() => {
 							setDownloadError(null);
 							candidateClient

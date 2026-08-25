@@ -51,7 +51,7 @@ export const BillingStrip = ({
 }) => {
 	if (!points && !quote) return null;
 	return (
-		<div className="billing-strip">
+		<div className="billing-strip" data-tour="billing-strip">
 			{points?.allowance && (
 				<span>
 					{points.allowance.freeUsedThisWeek

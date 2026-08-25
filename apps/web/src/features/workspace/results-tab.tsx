@@ -60,7 +60,7 @@ export const ResultsTab = ({
 	)?.score;
 
 	return (
-		<div className="workspace-stage-gap">
+		<div className="workspace-stage-gap" data-tour="tab-results">
 			<div className="stat-strip">
 				<div className="stat">
 					<span>Evaluated</span>
@@ -93,6 +93,7 @@ export const ResultsTab = ({
 					<select
 						aria-label="Filter by eligibility"
 						className="workspace-filter-select"
+						data-tour="eligibility-filter"
 						onChange={(event) =>
 							setEligibilityFilter(
 								event.target.value as EligibilityFilter,
@@ -180,7 +181,17 @@ export const ResultsTab = ({
 					</thead>
 					<tbody>
 						{visibleEvaluations.map((evaluation) => (
-							<tr key={evaluation.id}>
+							<tr
+								data-tour={
+									evaluation.status === "processing"
+										? "row-processing"
+										: evaluation.eligibility ===
+												"not_eligible"
+											? "row-not-eligible"
+											: undefined
+								}
+								key={evaluation.id}
+							>
 								<td>
 									<span style={{ fontWeight: 600 }}>
 										{evaluation.candidateName ??

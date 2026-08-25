@@ -9,7 +9,7 @@ export const EvidenceDrawer = ({
 	evaluation: Evaluation;
 	onClose: () => void;
 }) => (
-	<div className="drawer-panel">
+	<div className="drawer-panel" data-tour="evidence-drawer">
 		<header className="drawer-head">
 			<div>
 				<p className="eyebrow">Evidence inspection</p>

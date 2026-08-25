@@ -37,7 +37,7 @@ export const CriteriaTab = ({
 	onAdd,
 	onConfirm,
 }: CriteriaTabProps) => (
-	<div className="workspace-stage-gap">
+	<div className="workspace-stage-gap" data-tour="tab-criteria">
 		<p className="criterion-note">
 			Review every extracted criterion against its source. Only
 			resume-evidence criteria can enter automated scoring. Hard gates
