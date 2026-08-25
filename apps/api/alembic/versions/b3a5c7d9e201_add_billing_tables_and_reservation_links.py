@@ -8,7 +8,6 @@ Create Date: 2026-08-25
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
@@ -95,7 +94,7 @@ def upgrade() -> None:
 		"razorpay_webhook_event",
 		sa.Column("id", sa.Text(), primary_key=True),
 		sa.Column("event_type", sa.Text(), nullable=False),
-		sa.Column("payload", JSONB(), nullable=False),
+		sa.Column("payload", sa.JSON(), nullable=False),
 		sa.Column("received_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 		sa.Column("processed_at", sa.DateTime(timezone=True)),
 	)

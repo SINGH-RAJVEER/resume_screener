@@ -21,8 +21,12 @@ from app.persistence.models import (
 	JobVersion,
 	Organization,
 	OrganizationMember,
+	PointAccount,
+	PointLedgerEntry,
+	PointReservation,
 	ProcessingJob,
 	User,
+	WeeklyFreeUse,
 )
 from app.persistence.store import SQLAlchemyStore, UserRecord
 
@@ -36,6 +40,10 @@ UPLOAD_TABLES: Sequence[FromClause] = [
 	OrganizationMember.__table__,
 	ProcessingJob.__table__,
 	IndependentEvaluation.__table__,
+	PointAccount.__table__,
+	PointLedgerEntry.__table__,
+	PointReservation.__table__,
+	WeeklyFreeUse.__table__,
 ]
 
 # The shared models use PostgreSQL JSONB, which has no SQLite renderer.

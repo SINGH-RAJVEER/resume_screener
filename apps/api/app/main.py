@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from .api.billing_routes import router as billing_router
 from .api.routes import router
 from .core.config import Settings, load_settings
 from .core.http import (
@@ -68,6 +69,7 @@ def create_app(store: Store | None = None, settings: Settings | None = None) -> 
         return JSONResponse(error_body("INTERNAL_ERROR", "Internal server error"), status_code=500)
 
     application.include_router(router)
+    application.include_router(billing_router)
     application.add_middleware(BodySizeLimitMiddleware)
     application.add_middleware(OriginGuardMiddleware, web_url=web_url)
     application.add_middleware(RequestLoggingMiddleware)

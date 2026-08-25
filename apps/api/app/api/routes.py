@@ -21,6 +21,8 @@ from ..auth import (
     InvalidCredentialsError,
     validate_email,
 )
+from ..billing.allowance import claim_free_week
+from ..billing.quotes import EMPLOYER_QUOTE, INDEPENDENT_QUOTE, point_quote
 from ..core.http import APIError
 from ..documents.ingestion import (
     DocumentValidationError,
@@ -49,6 +51,7 @@ from ..persistence.models import (
     Organization,
     OrganizationAllowedEmail,
     OrganizationEmailDomain,
+    OrganizationEntitlement,
     OrganizationMember,
     ProcessingJob,
     RequirementAssessment,
@@ -56,6 +59,12 @@ from ..persistence.models import (
     ResumeSubmission,
     ResumeVersion,
     User,
+)
+from ..persistence.points import (
+    InsufficientPointsError,
+    ensure_organization_account,
+    ensure_user_account,
+    reserve_in_session,
 )
 from ..persistence.store import EmailAlreadyUsedError, SQLAlchemyStore, Store, UserRecord
 from .contracts import (
@@ -1032,6 +1041,9 @@ async def upload_resume(
             resume_version_id=version.id,
             scoring_policy_version=SCORING_POLICY_VERSION,
         )
+        await reserve_for_employer_evaluation(
+            session, job.organization_id, evaluation, request.app.state.settings.billing
+        )
         batch_submission = BatchEvaluationSubmission(
 			organization_id=job.organization_id,
 			job_id=job.id,
@@ -1146,6 +1158,9 @@ async def upload_resume_batch(
                 resume_version_id=version.id,
                 scoring_policy_version=SCORING_POLICY_VERSION,
             )
+            await reserve_for_employer_evaluation(
+                session, job.organization_id, evaluation, request.app.state.settings.billing
+            )
             batch_submission = (
                 BatchEvaluationSubmission(
 					organization_id=job.organization_id,
@@ -1244,13 +1259,43 @@ async def create_independent_evaluation(
         payload_reference=evaluation.id,
         idempotency_key=new_id(),
     )
+    quote = point_quote(INDEPENDENT_QUOTE, request.app.state.settings.billing)
     async with store.sessions().begin() as session:
+        # The weekly allowance claim and any reservation commit atomically with
+        # the evaluation row, so a failed upload cannot consume either.
+        account = await ensure_user_account(session, user.id)
+        claimed_week = await claim_free_week(session, user.id, datetime.now(UTC))
+        reserved_points = 0
+        if claimed_week is None:
+            try:
+                reservation = await reserve_in_session(
+                    session,
+                    account.id,
+                    quote.points,
+                    "independent_evaluation",
+                    f"independent-evaluation:{evaluation.id}",
+                )
+            except InsufficientPointsError as error:
+                raise APIError(
+                    402,
+                    "INSUFFICIENT_POINTS",
+                    f"This evaluation requires up to {quote.points} points",
+                ) from error
+            evaluation.point_reservation_id = reservation.id
+            reserved_points = quote.points
+        else:
+            evaluation.free_week_start = claimed_week
         session.add_all([evaluation, processing])
         storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
         storage.put(evaluation.storage_key, content)
         if job_description_key is not None and description_file_content is not None:
             storage.put(job_description_key, description_file_content)
-    return IndependentEvaluationAcceptedResponse(id=evaluation.id, processing_job_id=processing.id)
+    return IndependentEvaluationAcceptedResponse(
+        id=evaluation.id,
+        processing_job_id=processing.id,
+        free_evaluation=claimed_week is not None,
+        reserved_points=reserved_points,
+    )
 
 
 @router.get("/api/independent-evaluations")
@@ -1886,6 +1931,43 @@ def create_batch_evaluation(job: Job, job_version: JobVersion, user_id: str) -> 
         scoring_policy_version=SCORING_POLICY_VERSION,
         model_configuration={},
     )
+
+
+async def reserve_for_employer_evaluation(
+    session: AsyncSession,
+    organization_id: str,
+    evaluation: Evaluation,
+    billing: object,
+) -> None:
+    """Employers fund evaluations from the organization account unless a
+    manually provisioned enterprise entitlement covers the organization."""
+
+    entitled = (
+        await session.execute(
+            select(OrganizationEntitlement.id).where(
+                OrganizationEntitlement.organization_id == organization_id
+            )
+        )
+    ).scalar_one_or_none()
+    if entitled is not None:
+        return
+    quote = point_quote(EMPLOYER_QUOTE, billing)
+    account = await ensure_organization_account(session, organization_id)
+    try:
+        reservation = await reserve_in_session(
+            session,
+            account.id,
+            quote.points,
+            "employer_resume",
+            f"evaluation:{evaluation.id}",
+        )
+    except InsufficientPointsError as error:
+        raise APIError(
+            402,
+            "INSUFFICIENT_POINTS",
+            f"Evaluating this resume requires up to {quote.points} points",
+        ) from error
+    evaluation.point_reservation_id = reservation.id
 
 
 def requirement_drafts_by_id(value: object) -> dict[str, dict[str, object]]:

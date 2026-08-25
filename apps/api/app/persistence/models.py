@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    JSON,
     Text,
     UniqueConstraint,
     func,
@@ -849,7 +850,9 @@ class RazorpayWebhookEvent(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    # Generic JSON keeps the webhook inbox portable; events are never queried
+    # with PostgreSQL JSON operators.
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
