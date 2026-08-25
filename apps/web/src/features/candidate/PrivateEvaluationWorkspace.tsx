@@ -2,14 +2,9 @@ import { Button } from "@skillsignal/ui/components/button";
 import { Input } from "@skillsignal/ui/components/input";
 import { Label } from "@skillsignal/ui/components/label";
 import { Textarea } from "@skillsignal/ui/components/textarea";
-import {
-	AlertTriangle,
-	FileDown,
-	FileSearch,
-	LoaderCircle,
-	Trash2,
-} from "lucide-react";
+import { AlertTriangle, FileDown, FileSearch, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 import {
 	candidateClient,
 	type EmploymentFact,
@@ -238,7 +233,11 @@ export const PrivateEvaluationWorkspace = () => {
 							type="submit"
 						>
 							{isWorking ? (
-								<LoaderCircle aria-hidden className="spin" />
+								<ThinkingOrb
+									aria-hidden
+									size={20}
+									state="solving"
+								/>
 							) : (
 								<FileSearch aria-hidden />
 							)}
@@ -388,7 +387,7 @@ const ProcessingState = () => {
 	return (
 		<div className="report-progress" role="status" aria-live="polite">
 			<div className="report-progress-heading">
-				<LoaderCircle aria-hidden className="spin" />
+				<ThinkingOrb aria-hidden size={20} state="solving" />
 				<div>
 					<strong>Your private report is in progress</strong>
 					<p>{PROCESSING_STEPS[stepIndex]}</p>

@@ -12,12 +12,12 @@ import {
 	Download,
 	FileText,
 	Link as LinkIcon,
-	LoaderCircle,
 	Plus,
 	UploadCloud,
 	X,
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 import { authClient } from "../../lib/auth-client";
 import {
 	type Evaluation,
@@ -1778,9 +1778,10 @@ const ResultsTab = ({
 										<span className="muted-copy">—</span>
 									) : (
 										<span className="pending-cell">
-											<LoaderCircle
+											<ThinkingOrb
 												aria-hidden
-												className="spin"
+												size={20}
+												state="solving"
 											/>
 											Queued
 										</span>
@@ -1923,7 +1924,7 @@ const CriteriaTab = ({
 		</p>
 		{draftStatus === "processing" && (
 			<div className="criterion-processing" role="status">
-				<LoaderCircle aria-hidden className="spin" />
+				<ThinkingOrb aria-hidden size={20} state="solving" />
 				Compiling requirements and checking source evidence...
 			</div>
 		)}

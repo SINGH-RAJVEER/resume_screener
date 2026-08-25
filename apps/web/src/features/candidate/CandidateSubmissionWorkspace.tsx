@@ -1,13 +1,9 @@
 import { Button } from "@skillsignal/ui/components/button";
 import { Input } from "@skillsignal/ui/components/input";
 import { Label } from "@skillsignal/ui/components/label";
-import {
-	CheckCircle2,
-	KeyRound,
-	LoaderCircle,
-	UploadCloud,
-} from "lucide-react";
+import { CheckCircle2, KeyRound, UploadCloud } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 import { candidateClient } from "./client";
 
 type RedeemedInvitation = {
@@ -152,7 +148,11 @@ export const CandidateSubmissionWorkspace = () => {
 					</div>
 					<Button disabled={!resume || isSubmitting} type="submit">
 						{isSubmitting ? (
-							<LoaderCircle aria-hidden className="spin" />
+							<ThinkingOrb
+								aria-hidden
+								size={20}
+								state="solving"
+							/>
 						) : (
 							<UploadCloud aria-hidden />
 						)}
@@ -193,7 +193,11 @@ export const CandidateSubmissionWorkspace = () => {
 						type="submit"
 					>
 						{isRedeeming && (
-							<LoaderCircle aria-hidden className="spin" />
+							<ThinkingOrb
+								aria-hidden
+								size={20}
+								state="solving"
+							/>
 						)}
 						{isRedeeming ? "Checking passcode" : "Continue"}
 					</Button>

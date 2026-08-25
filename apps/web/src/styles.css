@@ -557,19 +557,6 @@ p {
 	color: var(--ink);
 	font-weight: 600;
 }
-.spin {
-	animation: spin 1.2s linear infinite;
-}
-@keyframes spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.spin {
-		animation: none;
-	}
-}
 .report-preview .report-section {
 	border-top: 1px solid var(--rule);
 	padding: 1.25rem 0;
