@@ -105,7 +105,7 @@ class OpenRouterClient:
 		inputs: list[object] = list(texts)
 		payload = cast(dict[str, object], {"model": model, "input": inputs})
 		body = await self._post(payload, path="/embeddings")
-		return parse_embedding_response(body)
+		return parse_embedding_response(body, expected_count=len(inputs))
 
 	async def _post(
 		self, payload: dict[str, object], path: str = "/chat/completions"
@@ -179,17 +179,27 @@ def classify_error(error: dict[str, object]) -> OpenRouterError:
 	return OpenRouterError(message)
 
 
-def parse_embedding_response(body: dict[str, object]) -> list[list[float]]:
+def parse_embedding_response(
+	body: dict[str, object], *, expected_count: int
+) -> list[list[float]]:
 	data = body.get("data")
 	if not isinstance(data, list) or not data:
 		raise OpenRouterError("Embedding response has no data")
-	vectors: list[list[float]] = []
+	# Callers zip returned vectors with their inputs by position, so a
+	# missing, duplicated, or out-of-range index would silently poison the
+	# embedding cache. Require exactly one entry per input index instead of
+	# guessing positions.
+	vectors: dict[int, list[float]] = {}
 	for item in cast(list[object], data):
 		if not isinstance(item, dict):
 			raise OpenRouterError("Embedding entry is malformed")
 		entry = cast(dict[str, object], item)
 		index = entry.get("index")
 		embedding = entry.get("embedding")
+		if not isinstance(index, int) or not 0 <= index < expected_count:
+			raise OpenRouterError("Embedding response indexes do not match the request")
+		if index in vectors:
+			raise OpenRouterError("Embedding response repeats an input index")
 		if not isinstance(embedding, list):
 			raise OpenRouterError("Embedding vector is missing")
 		values: list[float] = []
@@ -199,14 +209,13 @@ def parse_embedding_response(body: dict[str, object]) -> list[list[float]]:
 			values.append(float(value))
 		if not values:
 			raise OpenRouterError("Embedding vector is empty")
-		position = index if isinstance(index, int) else len(vectors)
-		while len(vectors) <= position:
-			vectors.append([])
-		vectors[position] = values
-	dimensions = {len(vector) for vector in vectors}
+		vectors[index] = values
+	if len(vectors) != expected_count:
+		raise OpenRouterError("Embedding response does not cover every input")
+	dimensions = {len(vector) for vector in vectors.values()}
 	if len(dimensions) != 1:
 		raise OpenRouterError("Embedding vectors have inconsistent dimensions")
-	return vectors
+	return [vectors[index] for index in range(expected_count)]
 
 
 def parse_json_completion(body: dict[str, object]) -> dict[str, object]:

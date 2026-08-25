@@ -158,6 +158,80 @@ def test_refusal_is_not_retryable() -> None:
 		parse_json_completion(body)
 
 
+async def test_embed_texts_rejects_inconsistent_dimensions() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(
+			200,
+			json={
+				"data": [
+					{"index": 0, "embedding": [0.1]},
+					{"index": 1, "embedding": [0.2, 0.3]},
+				]
+			},
+		)
+
+	client = OpenRouterClient(
+		api_key="key", timeout_seconds=5, transport=httpx.MockTransport(handler)
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a", "b"])
+
+
+async def test_embed_texts_rejects_missing_index() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(
+			200,
+			json={"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]},
+		)
+
+	client = OpenRouterClient(
+		api_key="key", timeout_seconds=5, transport=httpx.MockTransport(handler)
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a", "b"])
+
+
+async def test_embed_texts_rejects_truncated_response() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]})
+
+	client = OpenRouterClient(
+		api_key="key", timeout_seconds=5, transport=httpx.MockTransport(handler)
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a", "b"])
+
+
+async def test_embed_texts_rejects_duplicate_index() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(
+			200,
+			json={
+				"data": [
+					{"index": 0, "embedding": [0.1, 0.2]},
+					{"index": 0, "embedding": [0.3, 0.4]},
+				]
+			},
+		)
+
+	client = OpenRouterClient(
+		api_key="key", timeout_seconds=5, transport=httpx.MockTransport(handler)
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a", "b"])
+
+
+async def test_embed_texts_rejects_out_of_range_index() -> None:
+	def handler(request: httpx.Request) -> httpx.Response:
+		return httpx.Response(200, json={"data": [{"index": 5, "embedding": [0.1, 0.2]}]})
+
+	client = OpenRouterClient(
+		api_key="key", timeout_seconds=5, transport=httpx.MockTransport(handler)
+	)
+	with pytest.raises(OpenRouterError):
+		await client.embed_texts(model="m", texts=["a"])
+
+
 async def test_embed_texts_returns_indexed_vectors() -> None:
 	requests: list[dict[str, object]] = []
 
@@ -181,24 +255,3 @@ async def test_embed_texts_returns_indexed_vectors() -> None:
 	vectors = await client.embed_texts(model="qwen/qwen3-embedding-8b", texts=["a", "b"])
 	assert vectors == [[0.1, 0.3], [0.2, 0.4]]
 	assert requests[0]["model"] == "qwen/qwen3-embedding-8b"
-
-
-async def test_embed_texts_rejects_inconsistent_dimensions() -> None:
-	def handler(request: httpx.Request) -> httpx.Response:
-		return httpx.Response(
-			200,
-			json={
-				"data": [
-					{"index": 0, "embedding": [0.1]},
-					{"index": 1, "embedding": [0.2, 0.3]},
-				]
-			},
-		)
-
-	client = OpenRouterClient(
-		api_key="key",
-		timeout_seconds=5,
-		transport=httpx.MockTransport(handler),
-	)
-	with pytest.raises(OpenRouterError):
-		await client.embed_texts(model="m", texts=["a", "b"])
