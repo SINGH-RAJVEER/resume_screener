@@ -236,6 +236,77 @@ async def test_a_purchased_balance_reserves_the_quoted_maximum(tmp_path: Path) -
 	assert sorted(amounts) == [1000]
 
 
+async def test_deleting_a_paid_evaluation_releases_the_open_hold(tmp_path: Path) -> None:
+	async with billing_client(tmp_path) as (client, store):
+		headers = auth_headers(store, "candidate-1")
+		await seed_candidate(store)
+		async with store.sessions().begin() as session:
+			session.add(PointAccount(id="acct-1", owner_user_id="candidate-1"))
+			session.add(
+				PointLedgerEntry(
+					id="entry-1",
+					account_id="acct-1",
+					amount=1000,
+					reason="purchase",
+					idempotency_key="purchase-1",
+				)
+			)
+
+		await upload_resume(client, headers)  # consumes the weekly free evaluation
+		paid = await upload_resume(client, headers)
+		evaluation_id = cast("str", paid["id"])
+		deleted = await client.delete(
+			f"/api/independent-evaluations/{evaluation_id}", headers=headers
+		)
+		released_states = (
+			(await store.sessions()().execute(select(PointReservation.state))).scalars().all()
+		)
+		retry = await upload_resume(client, headers)
+		final_states = (
+			(await store.sessions()().execute(select(PointReservation.state))).scalars().all()
+		)
+
+	assert deleted.status_code == 204
+	assert released_states == ["released"]
+	# The returned hold funds another evaluation instead of stranding points.
+	assert retry.status_code == 202
+	assert final_states == ["released", "reserved"]
+
+
+async def test_deleting_a_settled_evaluation_never_touches_the_ledger(tmp_path: Path) -> None:
+	async with billing_client(tmp_path) as (client, store):
+		headers = auth_headers(store, "candidate-1")
+		await seed_candidate(store)
+		async with store.sessions().begin() as session:
+			session.add(PointAccount(id="acct-1", owner_user_id="candidate-1"))
+			session.add(
+				PointLedgerEntry(
+					id="entry-1",
+					account_id="acct-1",
+					amount=1000,
+					reason="purchase",
+					idempotency_key="purchase-1",
+				)
+			)
+
+		await upload_resume(client, headers)  # consumes the weekly free evaluation
+		paid = await upload_resume(client, headers)
+		async with store.sessions().begin() as session:
+			reservation = (
+				await session.execute(select(PointReservation))
+			).scalar_one()
+			assert reservation.state == "reserved"
+			reservation.state = "settled"
+		deleted = await client.delete(
+			f"/api/independent-evaluations/{cast('str', paid['id'])}",
+			headers=headers,
+		)
+		amounts = await ledger_amounts(store)
+
+	assert deleted.status_code == 204
+	assert amounts == [1000]
+
+
 async def test_webhook_capture_grants_points_once_and_refunds_compensate(
 	tmp_path: Path,
 ) -> None:
