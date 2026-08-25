@@ -13,6 +13,9 @@ from pypdf import filters as pdf_filters
 MAX_PAGES = 100
 MAX_PDF_PAGE_DIMENSION_POINTS = 14_400
 MAX_PDF_DECOMPRESSED_STREAM_BYTES = 25 * 1024 * 1024
+# A small DOCX can decompress to gigabytes of XML; bound the uncompressed
+# body the same way the PDF stream cap bounds inflated content streams.
+MAX_DOCX_DOCUMENT_XML_BYTES = 25 * 1024 * 1024
 MAX_EXTRACTED_CHARACTERS = 250_000
 MIN_RELIABLE_NON_WHITESPACE_CHARACTERS = 40
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -363,12 +366,24 @@ def pdf_page_blocks(
 def extract_docx_paragraphs(content: bytes) -> list[str]:
 	try:
 		with ZipFile(BytesIO(content)) as archive:
+			# Read only the main document part. Encrypted archives raise
+			# RuntimeError and unsupported compression raises
+			# NotImplementedError; both are malformed input here.
+			info = archive.getinfo("word/document.xml")
+			if info.file_size > MAX_DOCX_DOCUMENT_XML_BYTES:
+				raise DocumentParseError("Resume DOCX decompresses to too much content")
 			document = archive.read("word/document.xml")
-	except (BadZipFile, KeyError) as error:
+	except DocumentParseError:
+		raise
+	except (BadZipFile, KeyError, NotImplementedError, RuntimeError) as error:
 		raise DocumentParseError("Resume DOCX could not be parsed") from error
+	if b"<!DOCTYPE" in document or b"<!ENTITY" in document:
+		# WordprocessingML never carries a DTD; entity declarations are the
+		# billion-laughs expansion vector, so reject them before parsing.
+		raise DocumentParseError("Resume DOCX contains unsupported markup declarations")
 	try:
 		root = ElementTree.fromstring(document)
-	except ElementTree.ParseError as error:
+	except (ElementTree.ParseError, ValueError) as error:
 		raise DocumentParseError("Resume DOCX could not be parsed") from error
 	paragraphs = [
 		normalize_text(paragraph_text(paragraph), allow_empty=True)

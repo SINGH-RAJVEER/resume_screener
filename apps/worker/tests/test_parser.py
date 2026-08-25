@@ -6,6 +6,7 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from worker.documents import parser
 from worker.documents.parser import DocumentParseError, extract_blocks
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -118,6 +119,66 @@ def test_extracts_docx_paragraphs_as_separate_evidence_blocks() -> None:
 	]
 	assert [block["readingOrder"] for block in parsed["blocks"]] == [1, 2]
 	assert {block["method"] for block in parsed["blocks"]} == {"docx_xml"}
+
+
+def docx_with_document_xml(document_xml: str) -> bytes:
+	content = BytesIO()
+	with ZipFile(content, "w") as archive:
+		archive.writestr("word/document.xml", document_xml)
+	return content.getvalue()
+
+
+@pytest.mark.parametrize(
+	"document_xml",
+	[
+		# Entity declarations are the billion-laughs expansion vector and
+		# never appear in genuine WordprocessingML.
+		'<!DOCTYPE w:document [<!ENTITY a "aaaa">]>'
+		'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+		"<w:body><w:p><w:r><w:t>&a;</w:t></w:r></w:p></w:body></w:document>",
+	],
+)
+def test_rejects_docx_markup_that_the_parser_cannot_safely_expand(
+	document_xml: str,
+) -> None:
+	with pytest.raises(DocumentParseError):
+		extract_blocks(
+			docx_with_document_xml(document_xml),
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		)
+
+
+def test_rejects_oversized_docx_document_part(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr(parser, "MAX_DOCX_DOCUMENT_XML_BYTES", 16)
+	document_xml = (
+		'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+		"<w:body><w:p><w:r><w:t>Ada</w:t></w:r></w:p></w:body></w:document>"
+	)
+
+	with pytest.raises(DocumentParseError):
+		extract_blocks(
+			docx_with_document_xml(document_xml),
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		)
+
+
+def test_rejects_docx_entries_with_unreadable_encoding() -> None:
+	# Compression method 99 marks AES-encrypted entries; zipfile raises
+	# NotImplementedError instead of BadZipFile when reading them.
+	content = BytesIO()
+	with ZipFile(content, "w") as archive:
+		archive.writestr("word/document.xml", "<w:document/>")
+	raw = bytearray(content.getvalue())
+	method = (99).to_bytes(2, "little")
+	raw[8:10] = method  # local file header
+	center = raw.find(b"PK\x01\x02")
+	raw[center + 10 : center + 12] = method  # central directory
+
+	with pytest.raises(DocumentParseError):
+		extract_blocks(
+			bytes(raw),
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		)
 
 
 @pytest.mark.parametrize(

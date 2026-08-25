@@ -63,3 +63,18 @@ def test_rendered_docx_omits_empty_sections_and_never_invents_content() -> None:
 	assert texts[0] == "Resume"
 	headings = {"Skills", "Experience", "Education", "Certifications", "Improvement notes"}
 	assert not any(line in headings for line in texts)
+
+
+def test_rendered_docx_strips_control_characters_from_facts() -> None:
+	unsanitized: dict[str, object] = {
+		"contact": {"name": "Ada\x0bLovelace\x00", "email": "ada@example.com"}
+	}
+	document = Document(BytesIO(render_resume_docx(unsanitized, [])))
+	assert document.paragraphs[0].text == "AdaLovelace"
+
+
+def test_rendered_docx_caps_individual_fact_length() -> None:
+	long_name = "A" * 5_000
+	fact: dict[str, object] = {"contact": {"name": long_name}}
+	document = Document(BytesIO(render_resume_docx(fact, [])))
+	assert len(document.paragraphs[0].text) == 2_000

@@ -4,6 +4,8 @@ from typing import cast
 
 from docx import Document
 
+MAX_RENDERED_TEXT_CHARACTERS = 2_000
+
 
 def render_resume_docx(
 	facts: Mapping[str, object], suggestions: Sequence[Mapping[str, object]]
@@ -126,4 +128,16 @@ def entries_of(value: object) -> list[Mapping[str, object]]:
 
 
 def text_of(value: object) -> str | None:
-	return value if isinstance(value, str) and value.strip() else None
+	if not isinstance(value, str):
+		return None
+	# Model-extracted strings never pass through the parser's
+	# control-character rejection. XML 1.0 forbids most control characters,
+	# so one stray codepoint would produce a document Word cannot open.
+	cleaned = "".join(
+		character
+		for character in value
+		if character in "\t\n\r" or ord(character) >= 0x20
+	).strip()
+	if not cleaned:
+		return None
+	return cleaned[:MAX_RENDERED_TEXT_CHARACTERS]
