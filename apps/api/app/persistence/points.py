@@ -133,6 +133,43 @@ class PointLedger:
 			reservation.state = "released"
 			reservation.updated_at = datetime.now(UTC)
 
+	async def refund(
+		self, account_id: str, amount: int, reason: str, idempotency_key: str
+	) -> None:
+		"""Compensating negative entry; existing consumption is never rewritten."""
+
+		if amount <= 0:
+			raise ValueError("Refund amounts must be positive")
+		async with self._sessions.begin() as session:
+			await _account_for_update(session, account_id)
+			existing = await session.execute(
+				select(PointLedgerEntry).where(
+					(PointLedgerEntry.account_id == account_id)
+					& (PointLedgerEntry.idempotency_key == idempotency_key)
+				)
+			)
+			if existing.scalar_one_or_none() is not None:
+				return
+			session.add(
+				PointLedgerEntry(
+					id=_new_id(),
+					account_id=account_id,
+					amount=-amount,
+					reason=reason,
+					idempotency_key=idempotency_key,
+				)
+			)
+
+	async def entries(self, account_id: str, limit: int = 100) -> list[PointLedgerEntry]:
+		async with self._sessions() as session:
+			rows = await session.execute(
+				select(PointLedgerEntry)
+				.where(PointLedgerEntry.account_id == account_id)
+				.order_by(PointLedgerEntry.created_at.desc(), PointLedgerEntry.id.desc())
+				.limit(limit)
+			)
+			return list(rows.scalars())
+
 
 async def balance(session: AsyncSession, account_id: str) -> int:
 	total = await session.execute(

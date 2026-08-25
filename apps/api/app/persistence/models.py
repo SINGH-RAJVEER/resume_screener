@@ -515,6 +515,9 @@ class Evaluation(Base):
     assessment_schema_version: Mapped[str | None] = mapped_column(Text)
     assessment_prompt_version: Mapped[str | None] = mapped_column(Text)
     rank: Mapped[int | None] = mapped_column(Integer)
+    point_reservation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("point_reservation.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -676,6 +679,10 @@ class IndependentEvaluation(Base):
 		Text, nullable=False, server_default=text(f"'{SCORING_POLICY_VERSION}'")
 	)
     safe_error: Mapped[str | None] = mapped_column(Text)
+    point_reservation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("point_reservation.id", ondelete="SET NULL")
+    )
+    free_week_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -746,3 +753,104 @@ class PointReservation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class OrganizationEntitlement(Base):
+    """Manually provisioned enterprise access that bypasses point purchases."""
+
+    __tablename__ = "organization_entitlement"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    provisioned_by: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class WeeklyFreeUse(Base):
+    __tablename__ = "weekly_free_use"
+    __table_args__ = (
+        UniqueConstraint("user_id", "week_start", name="uq_weekly_free_use"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    week_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RazorpayOrder(Base):
+    __tablename__ = "razorpay_order"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('created', 'paid', 'refunded', 'failed')",
+            name="ck_razorpay_order_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    razorpay_order_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    account_id: Mapped[str] = mapped_column(
+        ForeignKey("point_account.id", ondelete="RESTRICT"), nullable=False
+    )
+    purchaser_user_id: Mapped[str] = mapped_column(
+        ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
+    )
+    pack_id: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_inr: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'INR'"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'created'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RazorpayPayment(Base):
+    __tablename__ = "razorpay_payment"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    razorpay_payment_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    order_row_id: Mapped[str] = mapped_column(
+        ForeignKey("razorpay_order.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    method: Mapped[str | None] = mapped_column(Text)
+    amount_inr: Mapped[int] = mapped_column(Integer, nullable=False)
+    refunded_inr: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    points_granted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    signature_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RazorpayWebhookEvent(Base):
+    """Durable idempotent inbox; events tolerate retries and out-of-order delivery."""
+
+    __tablename__ = "razorpay_webhook_event"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,10 +1,12 @@
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from sqlalchemy import URL
+
+from ..billing.settings import BillingSettings, load_billing_settings
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,7 @@ class Settings:
     jwt_secret: str
     jwt_ttl: timedelta
     storage_root: str = ".local-storage"
+    billing: BillingSettings = field(default_factory=BillingSettings)
 
 
 def load_settings() -> Settings:
@@ -30,6 +33,7 @@ def load_settings() -> Settings:
         jwt_secret=jwt_secret,
         jwt_ttl=jwt_ttl,
         storage_root=os.environ.get("STORAGE_ROOT", "") or ".local-storage",
+        billing=load_billing_settings(),
     )
 
 
