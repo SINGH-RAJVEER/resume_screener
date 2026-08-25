@@ -16,6 +16,9 @@ MAX_PDF_DECOMPRESSED_STREAM_BYTES = 25 * 1024 * 1024
 # A small DOCX can decompress to gigabytes of XML; bound the uncompressed
 # body the same way the PDF stream cap bounds inflated content streams.
 MAX_DOCX_DOCUMENT_XML_BYTES = 25 * 1024 * 1024
+MAX_DOCX_PACKAGE_ENTRIES = 1_000
+MAX_DOCX_PACKAGE_BYTES = 50 * 1024 * 1024
+MAX_DOCX_COMPRESSION_RATIO = 100
 MAX_EXTRACTED_CHARACTERS = 250_000
 MIN_RELIABLE_NON_WHITESPACE_CHARACTERS = 40
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -366,9 +369,27 @@ def pdf_page_blocks(
 def extract_docx_paragraphs(content: bytes) -> list[str]:
 	try:
 		with ZipFile(BytesIO(content)) as archive:
-			# Read only the main document part. Encrypted archives raise
-			# RuntimeError and unsupported compression raises
-			# NotImplementedError; both are malformed input here.
+			# Package-level guards mirror the upload validation in the API so
+			# nothing reaching the parser can expand past its memory budget.
+			entries = archive.infolist()
+			if len(entries) > MAX_DOCX_PACKAGE_ENTRIES:
+				raise DocumentParseError("Resume DOCX has too many package entries")
+			if sum(entry.file_size for entry in entries) > MAX_DOCX_PACKAGE_BYTES:
+				raise DocumentParseError("Resume DOCX package is too large")
+			if any(
+				entry.compress_size
+				and entry.file_size / entry.compress_size > MAX_DOCX_COMPRESSION_RATIO
+				for entry in entries
+			):
+				raise DocumentParseError("Resume DOCX has a suspicious compression ratio")
+			if any(entry.flag_bits & 0x1 for entry in entries):
+				raise DocumentParseError("Encrypted DOCX packages are not supported")
+			names = {entry.filename for entry in entries}
+			if any(name.casefold().endswith("vbaproject.bin") for name in names):
+				raise DocumentParseError("Macro-enabled DOCX packages are not supported")
+			# Read only the main document part. Unsupported compression raises
+			# NotImplementedError and broken archives raise RuntimeError; both
+			# are malformed input here.
 			info = archive.getinfo("word/document.xml")
 			if info.file_size > MAX_DOCX_DOCUMENT_XML_BYTES:
 				raise DocumentParseError("Resume DOCX decompresses to too much content")
