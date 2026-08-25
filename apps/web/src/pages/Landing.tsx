@@ -39,7 +39,9 @@ const AUDIENCES = [
 export const Landing = () => (
 	<main className="public-page">
 		<header className="public-header">
-			<strong>SkillSignal</strong>
+			<div className="brand-mark">
+				<img src="/icon.webp" alt="SkillSignal" />
+			</div>
 			<nav>
 				<Link to="/sign-in">Sign in</Link>
 				<Button asChild size="sm">
