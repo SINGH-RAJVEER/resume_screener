@@ -172,6 +172,26 @@ async def seed_employer_documents(store: SQLAlchemyStore) -> None:
 		)
 		session.add(Organization(id="org-1", name="Acme", retention_days=90))
 		await session.flush()
+		session.add(PointAccount(id="acct-org-1", organization_id="org-1"))
+		await session.flush()
+		session.add(
+			PointLedgerEntry(
+				id="grant-org-1",
+				account_id="acct-org-1",
+				amount=100,
+				reason="purchase",
+				idempotency_key="purchase-org-1",
+			)
+		)
+		session.add(
+			PointReservation(
+				id="hold-org-1",
+				account_id="acct-org-1",
+				amount=40,
+				purpose="employer_resume",
+				idempotency_key="reservation:evaluation-expired",
+			)
+		)
 		session.add(Job(id="job-1", organization_id="org-1", title="Role"))
 		await session.flush()
 		session.add(
@@ -256,6 +276,7 @@ async def seed_employer_documents(store: SQLAlchemyStore) -> None:
 					resume_version_id=f"version-{label}",
 					status="complete",
 					score=70,
+					point_reservation_id="hold-org-1" if label == "expired" else None,
 				)
 			)
 			await session.flush()
@@ -359,6 +380,14 @@ async def test_purge_removes_expired_employer_documents_to_their_derived_data(
 					)
 				).scalars()
 			)
+			hold_states = {
+				(reservation_id, state)
+				for reservation_id, state in (
+					await session.execute(
+						select(PointReservation.id, PointReservation.state)
+					)
+				).all()
+			}
 		assert document_ids == {"doc-live"}
 		assert version_ids == {"version-live"}
 		assert submission_ids == {"submission-live"}
@@ -368,6 +397,9 @@ async def test_purge_removes_expired_employer_documents_to_their_derived_data(
 		# The batch keeps its live submission, so it survives.
 		assert batches == {"batch-1"}
 		assert links == {"submission-live"}
+		# The expired evaluation's unsettled hold returned to the balance
+		# instead of outliving the row that referenced it.
+		assert hold_states == {("hold-org-1", "released")}
 		assert not (storage_root / "resumes/doc-expired.txt").exists()
 		assert (storage_root / "resumes/doc-live.txt").exists()
 

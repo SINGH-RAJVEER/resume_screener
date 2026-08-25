@@ -9,7 +9,7 @@ past the configured window.
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..documents.storage import LocalObjectStorage
@@ -103,6 +103,23 @@ async def _purge_independent_evaluations(
 		await session.delete(evaluation)
 
 
+async def _release_evaluation_holds(
+	session: AsyncSession, version_ids: Select[tuple[str]]
+) -> None:
+	reservation_ids = (
+		await session.scalars(
+			select(Evaluation.point_reservation_id).where(
+				Evaluation.resume_version_id.in_(version_ids)
+			)
+		)
+	).all()
+	for reservation_id in reservation_ids:
+		if reservation_id is not None:
+			# The bulk delete SET NULLs these links, so the holds would
+			# otherwise stay reserved forever and shrink the balance.
+			await release_in_session(session, str(reservation_id))
+
+
 async def _purge_resume_documents(
 	session: AsyncSession,
 	documents: list[ResumeDocument],
@@ -115,6 +132,7 @@ async def _purge_resume_documents(
 	submission_ids = select(ResumeSubmission.id).where(
 		ResumeSubmission.resume_version_id.in_(version_ids)
 	)
+	await _release_evaluation_holds(session, version_ids)
 	# Evaluations first: their rows RESTRICT version deletion and their
 	# children (assessments, review decisions) cascade from here.
 	await session.execute(delete(Evaluation).where(Evaluation.resume_version_id.in_(version_ids)))
