@@ -3,9 +3,11 @@ import { Input } from "@skillsignal/ui/components/input";
 import { Label } from "@skillsignal/ui/components/label";
 import { UploadCloud } from "lucide-react";
 import type { FormEvent } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 
 type UploadTabProps = {
 	confirmed: boolean;
+	isUploading: boolean;
 	resumes: File[];
 	uploadInputKey: number;
 	appendResumes: (files: File[]) => void;
@@ -15,6 +17,7 @@ type UploadTabProps = {
 
 export const UploadTab = ({
 	confirmed,
+	isUploading,
 	resumes,
 	uploadInputKey,
 	appendResumes,
@@ -69,10 +72,18 @@ export const UploadTab = ({
 					individually and candidate names come from the resumes.
 				</p>
 			</div>
-			<Button disabled={resumes.length === 0 || !confirmed} type="submit">
-				<UploadCloud />
-				Queue {resumes.length || "selected"} resume
-				{resumes.length === 1 ? "" : "s"}
+			<Button
+				disabled={resumes.length === 0 || !confirmed || isUploading}
+				type="submit"
+			>
+				{isUploading ? (
+					<ThinkingOrb aria-hidden size={20} state="solving" />
+				) : (
+					<UploadCloud />
+				)}
+				{isUploading
+					? "Queuing resumes..."
+					: `Queue ${resumes.length || "selected"} resume${resumes.length === 1 ? "" : "s"}`}
 			</Button>
 		</form>
 	</div>

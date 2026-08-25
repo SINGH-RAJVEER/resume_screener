@@ -22,6 +22,7 @@ export const ExportDialog = ({
 	const [labels, setLabels] = useState<Partial<Record<ExportColumn, string>>>(
 		{},
 	);
+	const [isExporting, setIsExporting] = useState(false);
 
 	const moveColumn = (column: ExportColumn, delta: number) => {
 		setSelection((current) => {
@@ -38,6 +39,8 @@ export const ExportDialog = ({
 	};
 
 	const exportCsv = async () => {
+		if (isExporting) return;
+		setIsExporting(true);
 		try {
 			await workspaceClient.exportEvaluationsCsv(jobId, {
 				columns: selection,
@@ -48,6 +51,8 @@ export const ExportDialog = ({
 			onDismiss();
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setIsExporting(false);
 		}
 	};
 
@@ -151,12 +156,12 @@ export const ExportDialog = ({
 						Cancel
 					</Button>
 					<Button
-						disabled={selection.length === 0}
+						disabled={selection.length === 0 || isExporting}
 						onClick={() => void exportCsv()}
 						size="sm"
 					>
 						<Download />
-						Export
+						{isExporting ? "Exporting..." : "Export"}
 					</Button>
 				</div>
 			</div>

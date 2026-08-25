@@ -19,16 +19,20 @@ export const CreateOrganizationDialog = ({
 	onCreated,
 }: CreateOrganizationDialogProps) => {
 	const [name, setName] = useState("");
+	const [isWorking, setIsWorking] = useState(false);
 
 	const createOrganization = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!name.trim()) return;
+		if (!name.trim() || isWorking) return;
+		setIsWorking(true);
 		try {
 			const created = await workspaceClient.createOrganization(name);
 			setName("");
 			onCreated(created);
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setIsWorking(false);
 		}
 	};
 
@@ -60,8 +64,8 @@ export const CreateOrganizationDialog = ({
 					>
 						Cancel
 					</Button>
-					<Button size="sm" type="submit">
-						Create
+					<Button disabled={isWorking} size="sm" type="submit">
+						{isWorking ? "Creating..." : "Create"}
 					</Button>
 				</div>
 			</form>
@@ -85,16 +89,19 @@ export const CreateJobDialog = ({
 	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [descriptionFile, setDescriptionFile] = useState<File | null>(null);
+	const [isWorking, setIsWorking] = useState(false);
 
 	const createJob = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (
 			!title.trim() ||
 			!organizationId ||
-			(!description.trim() && !descriptionFile)
+			(!description.trim() && !descriptionFile) ||
+			isWorking
 		) {
 			return;
 		}
+		setIsWorking(true);
 		try {
 			const job = await workspaceClient.createJob(
 				organizationId,
@@ -106,6 +113,8 @@ export const CreateJobDialog = ({
 			onCreated(detail);
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setIsWorking(false);
 		}
 	};
 
@@ -166,8 +175,8 @@ export const CreateJobDialog = ({
 					>
 						Cancel
 					</Button>
-					<Button size="sm" type="submit">
-						Create role
+					<Button disabled={isWorking} size="sm" type="submit">
+						{isWorking ? "Creating role..." : "Create role"}
 					</Button>
 				</div>
 			</form>
@@ -194,10 +203,12 @@ export const ApplicationWindowDialog = ({
 	const [closesAt, setClosesAt] = useState(
 		toLocalInput(job.applicationClosesAt),
 	);
+	const [isWorking, setIsWorking] = useState(false);
 
 	const saveApplicationWindow = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!opensAt || !closesAt) return;
+		if (!opensAt || !closesAt || isWorking) return;
+		setIsWorking(true);
 		try {
 			await workspaceClient.setApplicationWindow(
 				job.id,
@@ -207,6 +218,8 @@ export const ApplicationWindowDialog = ({
 			onSaved(await workspaceClient.job(job.id));
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setIsWorking(false);
 		}
 	};
 
@@ -252,8 +265,8 @@ export const ApplicationWindowDialog = ({
 					>
 						Cancel
 					</Button>
-					<Button size="sm" type="submit">
-						Save window
+					<Button disabled={isWorking} size="sm" type="submit">
+						{isWorking ? "Saving..." : "Save window"}
 					</Button>
 				</div>
 			</form>

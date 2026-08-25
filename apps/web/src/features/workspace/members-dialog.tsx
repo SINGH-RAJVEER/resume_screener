@@ -42,6 +42,8 @@ export const MembersDialog = ({
 	const [policyEmail, setPolicyEmail] = useState("");
 	const [orgPoints, setOrgPoints] = useState<PointsSummary | null>(null);
 	const [orgPacks, setOrgPacks] = useState<PointPack[]>([]);
+	const [isAddingMember, setIsAddingMember] = useState(false);
+	const [removingUserId, setRemovingUserId] = useState<string | null>(null);
 
 	useEffect(() => {
 		const load = async () => {
@@ -69,7 +71,8 @@ export const MembersDialog = ({
 
 	const addMember = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!memberEmail.trim()) return;
+		if (!memberEmail.trim() || isAddingMember) return;
+		setIsAddingMember(true);
 		try {
 			const added = await workspaceClient.addMember(
 				organizationId,
@@ -82,16 +85,22 @@ export const MembersDialog = ({
 			onNotice(`Member added as ${added.role}.`);
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setIsAddingMember(false);
 		}
 	};
 
 	const removeMember = async (userId: string) => {
+		if (removingUserId !== null) return;
+		setRemovingUserId(userId);
 		try {
 			await workspaceClient.removeMember(organizationId, userId);
 			setMembers(await workspaceClient.members(organizationId));
 			onNotice("Member removed.");
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setRemovingUserId(null);
 		}
 	};
 
@@ -238,13 +247,16 @@ export const MembersDialog = ({
 								</span>
 								{isOwner && member.role !== "owner" && (
 									<Button
+										disabled={removingUserId !== null}
 										onClick={() =>
 											void removeMember(member.userId)
 										}
 										size="sm"
 										variant="outline"
 									>
-										Remove
+										{removingUserId === member.userId
+											? "Removing..."
+											: "Remove"}
 									</Button>
 								)}
 							</span>
@@ -286,9 +298,13 @@ export const MembersDialog = ({
 							<option value="recruiter">Recruiter</option>
 							<option value="viewer">Viewer</option>
 						</select>
-						<Button size="sm" type="submit">
+						<Button
+							disabled={isAddingMember}
+							size="sm"
+							type="submit"
+						>
 							<Plus />
-							Add member
+							{isAddingMember ? "Adding..." : "Add member"}
 						</Button>
 					</form>
 				) : (

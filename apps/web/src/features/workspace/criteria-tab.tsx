@@ -11,6 +11,7 @@ type CriteriaTabProps = {
 	requirements: Requirement[];
 	confirmed: boolean;
 	canConfirm: boolean;
+	isConfirming: boolean;
 	draftStatus: JobDetail["draftStatus"];
 	draftError: string | null;
 	draftWarnings: string[];
@@ -27,6 +28,7 @@ export const CriteriaTab = ({
 	requirements,
 	confirmed,
 	canConfirm,
+	isConfirming,
 	draftStatus,
 	draftError,
 	draftWarnings,
@@ -163,9 +165,21 @@ export const CriteriaTab = ({
 				<Plus />
 				Add criterion
 			</Button>
-			<Button disabled={!canConfirm} onClick={onConfirm} size="sm">
-				<CheckCircle2 />
-				{confirmed ? "Confirm new version" : "Confirm requirements"}
+			<Button
+				disabled={!canConfirm || isConfirming}
+				onClick={onConfirm}
+				size="sm"
+			>
+				{isConfirming ? (
+					<ThinkingOrb aria-hidden size={20} state="solving" />
+				) : (
+					<CheckCircle2 />
+				)}
+				{isConfirming
+					? "Confirming..."
+					: confirmed
+						? "Confirm new version"
+						: "Confirm requirements"}
 			</Button>
 		</div>
 	</div>

@@ -76,6 +76,8 @@ export const Workspace = () => {
 	const [isExportOpen, setIsExportOpen] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [isConfirming, setIsConfirming] = useState(false);
+	const [isUploading, setIsUploading] = useState(false);
 
 	const reportError = useCallback((reason: unknown) => {
 		setNotice(null);
@@ -204,8 +206,12 @@ export const Workspace = () => {
 		return () => window.clearInterval(interval);
 	}, [selectedJob]);
 
+	// Terminal states never change, so polling must stop once every
+	// evaluation is complete or failed.
 	const hasPendingEvaluations = evaluations.some(
-		(evaluation) => evaluation.status !== "complete",
+		(evaluation) =>
+			evaluation.status === "pending" ||
+			evaluation.status === "processing",
 	);
 
 	useEffect(() => {
@@ -262,7 +268,8 @@ export const Workspace = () => {
 	}
 
 	const confirm = async () => {
-		if (!selectedJob) return;
+		if (!selectedJob || isConfirming) return;
+		setIsConfirming(true);
 		try {
 			await workspaceClient.confirmRequirements(
 				selectedJob.id,
@@ -276,12 +283,15 @@ export const Workspace = () => {
 			setActiveTab("results");
 		} catch (reason) {
 			reportError(reason);
+		} finally {
+			setIsConfirming(false);
 		}
 	};
 
 	const upload = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!selectedJob || resumes.length === 0) return;
+		if (!selectedJob || resumes.length === 0 || isUploading) return;
+		setIsUploading(true);
 		try {
 			const archives = resumes.filter((resume) =>
 				resume.name.toLowerCase().endsWith(".zip"),
@@ -337,6 +347,8 @@ export const Workspace = () => {
 			}
 		} catch (reason) {
 			reportError(reason);
+		} finally {
+			setIsUploading(false);
 		}
 	};
 
@@ -671,8 +683,11 @@ export const Workspace = () => {
 								<CriteriaTab
 									canConfirm={
 										requirements.length > 0 &&
-										selectedJob.draftStatus !== "processing"
+										selectedJob.draftStatus !==
+											"processing" &&
+										!isConfirming
 									}
+									isConfirming={isConfirming}
 									confirmed={selectedJob.confirmed}
 									draftError={selectedJob.draftError}
 									draftDegraded={selectedJob.draftDegraded}
@@ -709,6 +724,7 @@ export const Workspace = () => {
 							{activeTab === "upload" && (
 								<UploadTab
 									confirmed={selectedJob.confirmed}
+									isUploading={isUploading}
 									onConfirmCriteria={() =>
 										setActiveTab("criteria")
 									}
