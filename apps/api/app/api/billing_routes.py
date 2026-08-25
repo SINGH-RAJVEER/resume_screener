@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from secrets import token_urlsafe
+from typing import cast
 
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import select
@@ -224,7 +225,7 @@ async def verify_checkout(
             billing.razorpay_key_secret,
         ):
             raise APIError(400, "INVALID_SIGNATURE", "Checkout signature verification failed")
-        record_payment(
+        await record_payment(
             session,
             order,
             payment_id=input_data.razorpay_payment_id,
@@ -258,7 +259,7 @@ async def reconcile_order(order_id: str, request: Request) -> dict[str, object]:
             status = str(payment.get("status", ""))
             if not payment_id:
                 continue
-            row = record_payment(
+            row = await record_payment(
                 session,
                 order,
                 payment_id=payment_id,
@@ -267,8 +268,8 @@ async def reconcile_order(order_id: str, request: Request) -> dict[str, object]:
                 source="reconciliation",
                 signature_verified=False,
             )
-            granted = apply_grant_for_captured(session, order, row)
-            refunded_inr = sync_refunds(session, order, payment)
+            granted = await apply_grant_for_captured(session, order, row)
+            refunded_inr = await sync_refunds(session, order, payment)
             results.append(
                 {
                     "razorpayPaymentId": payment_id,
@@ -342,7 +343,7 @@ async def razorpay_webhook(request: Request) -> dict[str, bool]:
             if bind.dialect.name == "sqlite"
             else postgres_insert(RazorpayWebhookEvent).values(**values)
         ).on_conflict_do_nothing(index_elements=["id"])
-        inserted = (session.execute(statement).rowcount or 0) > 0
+        inserted = ((await session.execute(statement)).rowcount or 0) > 0
         if not inserted:
             return {"received": True}
         await process_webhook_event(session, event_type, payload)
@@ -366,7 +367,7 @@ async def process_webhook_event(
     if order is None:
         return
     if event_type.startswith("payment.") or event_type.startswith("order."):
-        row = record_payment(
+        row = await record_payment(
             session,
             order,
             payment_id=payment_id,
@@ -375,8 +376,26 @@ async def process_webhook_event(
             source="webhook",
             signature_verified=True,
         )
-        apply_grant_for_captured(session, order, row)
-        sync_refunds(session, order, payment)
+        await apply_grant_for_captured(session, order, row)
+        await sync_refunds(session, order, payment)
+    elif event_type == "refund.processed":
+        section = payload.get("payload")
+        if isinstance(section, dict):
+            refund_part = section.get("refund")
+            if isinstance(refund_part, dict):
+                entity = cast("dict[str, object] | None", refund_part.get("entity"))
+                if entity:
+                    merged = {**payment, "refunds": [entity]}
+                    await record_payment(
+                        session,
+                        order,
+                        payment_id=payment_id,
+                        status=str(payment.get("status", "")),
+                        method=_optional_text(payment.get("method")),
+                        source="webhook",
+                        signature_verified=True,
+                    )
+                    await sync_refunds(session, order, merged)
 
 
 async def owned_order(
@@ -395,7 +414,7 @@ async def owned_order(
     return order
 
 
-def record_payment(
+async def record_payment(
     session: AsyncSession,
     order: RazorpayOrder,
     *,
@@ -406,13 +425,12 @@ def record_payment(
     signature_verified: bool,
 ) -> RazorpayPayment:
     existing = (
-        session.execute(
+        await session.execute(
             select(RazorpayPayment).where(
                 RazorpayPayment.razorpay_payment_id == payment_id
             )
         )
-        .scalar_one_or_none()
-    )
+    ).scalar_one_or_none()
     if existing is not None:
         if status:
             existing.status = status
@@ -434,14 +452,14 @@ def record_payment(
     return payment
 
 
-def apply_grant_for_captured(
+async def apply_grant_for_captured(
     session: AsyncSession, order: RazorpayOrder, payment: RazorpayPayment
 ) -> bool:
     """Grant pack points once per captured payment; idempotent by payment id."""
 
     if payment.status not in {"captured", "authorized"} or payment.points_granted:
         return False
-    grant_in_session(
+    await grant_in_session(
         session,
         order.account_id,
         order.points,
@@ -454,7 +472,7 @@ def apply_grant_for_captured(
     return True
 
 
-def sync_refunds(
+async def sync_refunds(
     session: AsyncSession, order: RazorpayOrder, payment_payload: dict[str, object]
 ) -> int:
     """Apply compensating point entries for refunds, proportional to money back."""
@@ -472,14 +490,13 @@ def sync_refunds(
             continue
         entry_key = f"refund:{refund_id}"
         already_applied = (
-            session.execute(
+            await session.execute(
                 select(PointLedgerEntry.id).where(
                     (PointLedgerEntry.account_id == order.account_id)
                     & (PointLedgerEntry.idempotency_key == entry_key)
                 )
             )
-            .scalar_one_or_none()
-        )
+        ).scalar_one_or_none()
         if already_applied is not None:
             continue
         amount_inr = amount_paise // 100
@@ -496,7 +513,7 @@ def sync_refunds(
         total_refunded += amount_inr
     if total_refunded:
         payment_row = (
-            session.execute(
+            await session.execute(
                 select(RazorpayPayment).where(
                     (RazorpayPayment.order_row_id == order.id)
                     & (
@@ -505,8 +522,7 @@ def sync_refunds(
                     )
                 )
             )
-            .scalar_one_or_none()
-        )
+        ).scalar_one_or_none()
         if payment_row is not None:
             payment_row.refunded_inr += total_refunded
             payment_row.updated_at = datetime.now(UTC)
