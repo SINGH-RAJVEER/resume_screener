@@ -39,7 +39,11 @@ from .extraction.extractor import (
 )
 from .job_descriptions.compiler import compile_job_description
 from .job_descriptions.extractor import extract_job_requirements
-from .providers.openrouter import OpenRouterClient, OpenRouterError
+from .providers.openrouter import (
+	OpenRouterClient,
+	OpenRouterError,
+	OpenRouterRetryableError,
+)
 from .telemetry import (
 	instrument_engine,
 	instrument_httpx_clients,
@@ -68,6 +72,18 @@ DETERMINISTIC_EXTRACTION_WARNING = (
 
 class NonRetryableJobError(Exception):
 	pass
+
+
+class RetryableJobError(Exception):
+	"""Transient failure that sends the job back to the queue with backoff."""
+
+
+ASSESSMENT_UNAVAILABLE_DEGRADATION = (
+	"Model assessment was unavailable; deterministic outcomes were used"
+)
+ASSESSMENT_FAILURE_DEGRADATION = (
+	"Model assessment failed after retries; deterministic outcomes were used"
+)
 
 
 @dataclass(frozen=True)
@@ -134,12 +150,18 @@ class Worker:
 				"skillsignal.job.attempt": job.attempt_count,
 			},
 		) as span:
+			stop_heartbeat = asyncio.Event()
+			heartbeat = asyncio.create_task(self._heartbeat(job, stop_heartbeat))
 			try:
 				await self._dispatch(job)
 			except NonRetryableJobError as error:
 				span.set_status(Status(StatusCode.ERROR, str(error)))
 				await self._fail(job, str(error), retryable=False)
 				outcome = "failed_non_retryable"
+			except RetryableJobError as error:
+				span.set_status(Status(StatusCode.ERROR, str(error)))
+				await self._fail(job, str(error), retryable=True)
+				outcome = "failed_retryable"
 			except Exception as error:
 				logger.exception(
 					"processing job failed", extra={"job_id": job.id, "type": job.type}
@@ -150,8 +172,62 @@ class Worker:
 				outcome = "failed"
 			else:
 				await self._complete(job)
+			finally:
+				stop_heartbeat.set()
+				await asyncio.gather(heartbeat, return_exceptions=True)
 		record_job_outcome(job.type, outcome, time.monotonic() - started)
 		return True
+
+	async def _heartbeat(self, job: ClaimedJob, stop: asyncio.Event) -> None:
+		"""Extend the lease while a job runs so long model calls cannot
+		outlive it and silently invalidate the guarded writes."""
+		interval = max(1.0, self._settings.lease_seconds / 3)
+		while not stop.is_set():
+			try:
+				await asyncio.wait_for(stop.wait(), timeout=interval)
+				return
+			except TimeoutError:
+				pass
+			expires_at = datetime.now(UTC) + timedelta(seconds=self._settings.lease_seconds)
+			try:
+				async with self._engine.begin() as connection:
+					result = await connection.execute(
+						text(
+							"""
+							UPDATE processing_job
+							SET lease_expires_at = :expires_at
+							WHERE id = :id AND lease_token = :lease_token
+								AND status = 'processing'
+							"""
+						),
+						{
+							"id": job.id,
+							"lease_token": job.lease_token,
+							"expires_at": expires_at,
+						},
+					)
+			except Exception:
+				logger.exception("lease renewal failed", extra={"job_id": job.id})
+				continue
+			if result.rowcount == 0:
+				logger.warning(
+					"lease renewal found no active claim",
+					extra={"job_id": job.id},
+				)
+
+	def _requeue_or_degrade(
+		self,
+		job: ClaimedJob,
+		stage: str,
+		error: OpenRouterRetryableError,
+	) -> None:
+		"""Requeue the job on transient model failures while attempts remain.
+
+		On the final attempt this returns instead, and the caller falls back
+		to its deterministic result so a model outage never fails the job.
+		"""
+		if job.attempt_count < job.maximum_attempts:
+			raise RetryableJobError(f"{stage} hit a transient provider failure") from error
 
 	async def _claim(self) -> ClaimedJob | None:
 		lease_token = secrets.token_urlsafe(24)
@@ -242,6 +318,8 @@ class Worker:
 						max_output_tokens=self._settings.openrouter.max_output_tokens,
 					)
 			except OpenRouterError as error:
+				if isinstance(error, OpenRouterRetryableError):
+					self._requeue_or_degrade(job, "Resume fact extraction", error)
 				logger.warning(
 					"model extraction failed; using deterministic facts",
 					extra={"job_id": job.id, "reason": str(error)},
@@ -459,6 +537,8 @@ class Worker:
 					max_output_tokens=self._settings.openrouter.max_output_tokens,
 				)
 			except OpenRouterError as error:
+				if isinstance(error, OpenRouterRetryableError):
+					self._requeue_or_degrade(job, "Requirement extraction", error)
 				logger.warning(
 					"job requirement extraction failed; using deterministic drafts",
 					extra={"job_id": job.id, "reason": str(error)},
@@ -553,6 +633,8 @@ class Worker:
 					model=model, texts=list(missing_texts.values())
 				)
 			except OpenRouterError as error:
+				if isinstance(error, OpenRouterRetryableError):
+					self._requeue_or_degrade(job, "Block embedding", error)
 				logger.warning(
 					"embedding failed; skipping semantic evidence",
 					extra={"job_id": job.id, "reason": str(error)},
@@ -652,6 +734,8 @@ class Worker:
 						max_output_tokens=self._settings.openrouter.max_output_tokens,
 					)
 			except OpenRouterError as error:
+				if isinstance(error, OpenRouterRetryableError):
+					self._requeue_or_degrade(job, "Resume fact extraction", error)
 				logger.warning(
 					"model extraction failed; using deterministic facts",
 					extra={"job_id": job.id, "reason": str(error)},
@@ -875,6 +959,7 @@ class Worker:
 			outcome = evaluate(dict(evaluation["normalized_facts"] or {}), requirement_list)
 			assessments: Sequence[Assessment] = outcome.assessments
 			model_assessment_used = False
+			assessment_degradation: str | None = ASSESSMENT_UNAVAILABLE_DEGRADATION
 			assessable_requirements = [
 				requirement
 				for requirement in requirement_list
@@ -886,7 +971,13 @@ class Worker:
 				cast(object, evaluation["extraction_blocks"]) or {},
 			)
 			blocks = cast(list[Mapping[str, object]], extraction_blocks.get("blocks", []))
-			if self._openrouter is not None and assessable_requirements:
+			if self._openrouter is None:
+				assessment_degradation = (
+					ASSESSMENT_UNAVAILABLE_DEGRADATION
+					if assessable_requirements
+					else None
+				)
+			elif assessable_requirements:
 				try:
 					model_assessments = await assess_requirements(
 						self._openrouter,
@@ -896,16 +987,22 @@ class Worker:
 						max_output_tokens=self._settings.openrouter.max_output_tokens,
 					)
 				except OpenRouterError as error:
+					if isinstance(error, OpenRouterRetryableError):
+						self._requeue_or_degrade(job, "Requirement assessment", error)
 					logger.warning(
 						"model assessment failed; using deterministic outcomes",
 						extra={"job_id": job.id, "reason": str(error)},
 					)
+					assessment_degradation = ASSESSMENT_FAILURE_DEGRADATION
 				else:
 					model_assessment_used = True
+					assessment_degradation = None
 					assessments = refine_assessments(
 						assessments, model_assessments, requirement_list
 					)
 					outcome = summarize(assessments, requirement_list)
+			else:
+				assessment_degradation = None
 			block_texts = {
 				str(block["id"]): str(block.get("text", ""))
 				for block in blocks
@@ -947,7 +1044,7 @@ class Worker:
 						"lexical": json.dumps(lexical_evidence.get(assessment.requirement_id)),
 					},
 				)
-			await connection.execute(
+			completed = await connection.execute(
 				text(
 					"""
 					UPDATE evaluation
@@ -956,6 +1053,7 @@ class Worker:
 						scoring_policy_version = :scoring_policy_version,
 						assessment_schema_version = :assessment_schema_version,
 						assessment_prompt_version = :assessment_prompt_version,
+						assessment_degradation = :assessment_degradation,
 						completed_at = now()
 					WHERE id = :evaluation_id
 						AND EXISTS (
@@ -979,8 +1077,13 @@ class Worker:
 					"assessment_prompt_version": (
 						ASSESSMENT_PROMPT_VERSION if model_assessment_used else None
 					),
+					"assessment_degradation": assessment_degradation,
 				},
 			)
+			if completed.rowcount == 0:
+				# The lease expired or the evaluation was deleted mid-run;
+				# whoever owns the hold now settles or releases it.
+				return
 			reservation = (
 				await connection.execute(
 					text(
@@ -1037,6 +1140,8 @@ class Worker:
 				texts=[str(requirement["normalized_text"]) for requirement in requirements],
 			)
 		except OpenRouterError as error:
+			if isinstance(error, OpenRouterRetryableError):
+				self._requeue_or_degrade(job, "Requirement embedding", error)
 			logger.warning(
 				"requirement embedding failed; no semantic evidence",
 				extra={"job_id": job.id, "reason": str(error)},

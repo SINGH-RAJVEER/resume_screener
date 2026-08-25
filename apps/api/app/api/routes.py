@@ -1577,7 +1577,7 @@ async def list_evaluations(
                     "eligibility": evaluation.eligibility,
                     "skills": evaluation_skill_names(version),
                     "hardGates": hard_gate_outcomes(triples),
-                    **resume_quality_payload(version),
+                    **evaluation_quality_payload(evaluation, version),
                     "assessments": [
                         assessment_payload(
                             assessment,
@@ -1749,6 +1749,17 @@ def resume_quality_payload(version: ResumeVersion) -> dict[str, object]:
     }
 
 
+def evaluation_quality_payload(
+    evaluation: Evaluation, version: ResumeVersion
+) -> dict[str, object]:
+    """Extraction warnings plus any persisted assessment-stage degradation."""
+    payload = resume_quality_payload(version)
+    if evaluation.assessment_degradation:
+        warnings = cast("list[str]", payload["qualityWarnings"])
+        payload["qualityWarnings"] = [*warnings, evaluation.assessment_degradation]
+    return payload
+
+
 def assessment_payload(
     assessment: RequirementAssessment,
     requirement: JobRequirement,
@@ -1827,7 +1838,7 @@ async def export_evaluations_csv(
         writer.writerow([csv_safe(header) for _key, header in resolved])
         for evaluation, candidate, version in rows:
             values = export_row_values(
-                evaluation, candidate, resume_quality_payload(version)
+                evaluation, candidate, evaluation_quality_payload(evaluation, version)
             )
             writer.writerow([csv_safe(values[key]) for key, _header in resolved])
     return Response(

@@ -515,6 +515,9 @@ class Evaluation(Base):
     )
     assessment_schema_version: Mapped[str | None] = mapped_column(Text)
     assessment_prompt_version: Mapped[str | None] = mapped_column(Text)
+    # Safe reason recorded when the model assessment stage degraded to
+    # deterministic outcomes, so the degradation outlives the worker run.
+    assessment_degradation: Mapped[str | None] = mapped_column(Text)
     rank: Mapped[int | None] = mapped_column(Integer)
     point_reservation_id: Mapped[str | None] = mapped_column(
         ForeignKey("point_reservation.id", ondelete="SET NULL")
