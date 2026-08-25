@@ -5,6 +5,7 @@ import pytest
 
 from app.documents.ingestion import (
 	DocumentValidationError,
+	inspect_resume_files,
 	inspect_resume_zip,
 	validate_document,
 )
@@ -97,3 +98,49 @@ def test_rejects_windows_paths_and_excessive_zip_nesting() -> None:
 			"ZIP entry exceeds the nesting limit",
 		),
 	]
+
+
+def test_reports_each_invalid_uploaded_file_without_rejecting_valid_resumes() -> None:
+	entries = inspect_resume_files(
+		[
+			("ada.pdf", b"%PDF-1.7\nresume"),
+			("grace.txt", b"Python engineer"),
+			("readme.md", b"invalid"),
+			("empty.pdf", b""),
+			("../escape.txt", b"invalid"),
+		]
+	)
+
+	assert [(entry.name, entry.reason) for entry in entries] == [
+		("ada.pdf", None),
+		("grace.txt", None),
+		("readme.md", "Document must be a PDF, DOCX, or TXT file"),
+		("empty.pdf", "Document must be between 1 byte and 20 MB"),
+		("../escape.txt", "Resume file has an unsafe path"),
+	]
+
+
+def test_accepts_directory_relative_names_within_the_nesting_limit() -> None:
+	entries = inspect_resume_files(
+		[
+			("batch-2026/ada.pdf", b"%PDF-1.7\nresume"),
+			("/".join(["nested"] * 12) + "/grace.pdf", b"%PDF-1.7\nresume"),
+		]
+	)
+
+	assert [(entry.name, entry.reason) for entry in entries] == [
+		("batch-2026/ada.pdf", None),
+		(
+			"/".join(["nested"] * 12) + "/grace.pdf",
+			"Resume file exceeds the nesting limit",
+		),
+	]
+
+
+def test_rejects_empty_oversized_and_too_large_file_batches() -> None:
+	with pytest.raises(DocumentValidationError, match="at least one file"):
+		inspect_resume_files([])
+	with pytest.raises(DocumentValidationError, match="exceeds 500 files"):
+		inspect_resume_files([(f"resume-{index}.txt", b"x") for index in range(501)])
+	with pytest.raises(DocumentValidationError, match="exceeds 500 MB"):
+		inspect_resume_files([("resume.txt", b"x" * (500 * 1024 * 1024 + 1))])

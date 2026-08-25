@@ -1,4 +1,5 @@
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePath, PurePosixPath
@@ -80,6 +81,46 @@ def validate_docx(content: bytes) -> None:
 		raise DocumentValidationError("Macro-enabled Office documents are not supported")
 
 
+def unsafe_path(filename: str) -> bool:
+	path = PurePosixPath(filename.replace("\\", "/"))
+	return (
+		path.is_absolute()
+		or ".." in path.parts
+		or re.match(r"^[A-Za-z]:", filename) is not None
+	)
+
+
+def inspect_resume_files(files: Sequence[tuple[str | None, bytes]]) -> list[BatchEntry]:
+	"""Validate loose uploads individually so one bad file never fails the batch."""
+	if not files:
+		raise DocumentValidationError("Resume batch must contain at least one file")
+	if len(files) > MAX_BATCH_FILES:
+		raise DocumentValidationError("Resume batch exceeds 500 files")
+	if sum(len(content) for _, content in files) > MAX_BATCH_UNCOMPRESSED_BYTES:
+		raise DocumentValidationError("Resume batch exceeds 500 MB")
+	result: list[BatchEntry] = []
+	for filename, content in files:
+		name = filename or ""
+		reason = file_entry_reason(name, content)
+		result.append(BatchEntry(name, None if reason else content, reason))
+	return result
+
+
+def file_entry_reason(filename: str, content: bytes) -> str | None:
+	if unsafe_path(filename):
+		return "Resume file has an unsafe path"
+	if len(PurePosixPath(filename.replace("\\", "/")).parts) > MAX_ZIP_DEPTH + 1:
+		return "Resume file exceeds the nesting limit"
+	media_type = media_type_for_name(filename)
+	if media_type is None:
+		return "Document must be a PDF, DOCX, or TXT file"
+	try:
+		validate_document(content, media_type, filename)
+	except DocumentValidationError as error:
+		return str(error)
+	return None
+
+
 def inspect_resume_zip(content: bytes) -> list[BatchEntry]:
 	try:
 		archive = ZipFile(BytesIO(content))
@@ -127,11 +168,7 @@ def zip_entry_reason(
 	file_size: int,
 ) -> str | None:
 	path = PurePosixPath(filename.replace("\\", "/"))
-	if (
-		path.is_absolute()
-		or ".." in path.parts
-		or re.match(r"^[A-Za-z]:", filename) is not None
-	):
+	if unsafe_path(filename):
 		return "ZIP entry has an unsafe path"
 	if len(path.parts) - 1 > MAX_ZIP_DEPTH:
 		return "ZIP entry exceeds the nesting limit"

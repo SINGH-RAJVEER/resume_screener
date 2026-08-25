@@ -25,7 +25,9 @@ from ..billing.allowance import claim_free_week
 from ..billing.quotes import EMPLOYER_QUOTE, INDEPENDENT_QUOTE, point_quote
 from ..core.http import APIError
 from ..documents.ingestion import (
+    BatchEntry,
     DocumentValidationError,
+    inspect_resume_files,
     inspect_resume_zip,
     media_type_for_name,
     validate_document,
@@ -1092,109 +1094,164 @@ async def upload_resume_batch(
         entries = inspect_resume_zip(await archive.read())
     except DocumentValidationError as error:
         raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
-    accepted: list[dict[str, str]] = []
     rejected = [
         {"name": entry.name, "reason": entry.reason}
         for entry in entries
         if entry.reason is not None
     ]
     async with store.sessions().begin() as session:
-        job = await session.get(Job, job_id)
-        if job is None:
-            raise APIError(404, "NOT_FOUND", "Job not found")
-        await require_write_membership(session, job.organization_id, user.id)
-        job_version = await latest_job_version(session, job.id)
-        if job_version.confirmed_at is None:
-            raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
-        batch_evaluation: BatchEvaluation | None = None
-        if any(entry.content is not None for entry in entries):
-            batch_evaluation = create_batch_evaluation(job, job_version, user.id)
-            session.add(batch_evaluation)
-            await session.flush()
-        storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
-        for entry in entries:
-            if entry.content is None:
-                continue
-            validated = validate_document(
-                entry.content, media_type_for_name(entry.name), entry.name
-            )
-            candidate = CandidateRecord(id=new_id(), organization_id=job.organization_id)
-            document = ResumeDocument(
-                id=new_id(),
-                organization_id=job.organization_id,
-                candidate_record_id=candidate.id,
-                storage_key=f"resumes/{new_id()}{validated.extension}",
-                checksum=sha256(entry.content).hexdigest(),
-                media_type=validated.media_type,
-                size_bytes=len(entry.content),
-                original_name=entry.name,
-                retention_date=datetime.now(UTC) + timedelta(days=90),
-            )
-            version = ResumeVersion(
-                id=new_id(),
-                organization_id=job.organization_id,
-                resume_document_id=document.id,
-                version=1,
-            )
-            submission = ResumeSubmission(
-                id=new_id(),
-                organization_id=job.organization_id,
-                job_id=job.id,
-                candidate_record_id=candidate.id,
-                resume_version_id=version.id,
-                submitting_user_id=user.id,
-            )
-            processing = ProcessingJob(
-                id=new_id(),
-                type="resume_processing",
-                payload_reference=version.id,
-                idempotency_key=new_id(),
-            )
-            evaluation = Evaluation(
-                id=new_id(),
-                batch_evaluation_id=batch_evaluation.id if batch_evaluation else None,
-                resume_submission_id=submission.id,
-                job_version_id=job_version.id,
-                resume_version_id=version.id,
-                scoring_policy_version=SCORING_POLICY_VERSION,
-            )
-            await reserve_for_employer_evaluation(
-                session, job.organization_id, evaluation, request.app.state.settings.billing
-            )
-            batch_submission = (
-                BatchEvaluationSubmission(
-					organization_id=job.organization_id,
-					job_id=job.id,
-                    batch_evaluation_id=batch_evaluation.id,
-                    resume_submission_id=submission.id,
-                )
-                if batch_evaluation
-                else None
-            )
-            await add_resume_chain(
-                session,
-                candidate,
-                document,
-                version,
-                submission,
-                processing,
-                evaluation,
-                batch_submission,
-            )
-            storage.put(document.storage_key, entry.content)
-            accepted.append(
-                {
-                    "name": entry.name,
-                    "processingJobId": processing.id,
-                    "submissionId": submission.id,
-                    "evaluationId": evaluation.id,
-                }
-            )
+        job, job_version = await load_confirmed_job(session, job_id, user.id)
+        batch_evaluation, accepted = await queue_resume_batch(
+            session, request, job, job_version, user.id, entries
+        )
     return {
         "batchEvaluationId": batch_evaluation.id if batch_evaluation else None,
         "accepted": accepted,
         "rejected": rejected,
     }
+
+
+@router.post(
+    "/api/jobs/{job_id}/resume-batches/files",
+    status_code=202,
+    response_model=ResumeBatchAcceptedResponse,
+)
+async def upload_resume_file_batch(
+    job_id: str, request: Request, files: list[UploadFile] = File()
+) -> dict[str, object]:
+    """Queue each valid upload independently, reporting invalid files without storing them."""
+    user = await require_user(request)
+    store = require_sqlalchemy_store(request)
+    payloads = [(file.filename, await file.read()) for file in files]
+    try:
+        entries = inspect_resume_files(payloads)
+    except DocumentValidationError as error:
+        raise APIError(400, "INVALID_DOCUMENT", str(error)) from error
+    rejected = [
+        {"name": entry.name, "reason": entry.reason}
+        for entry in entries
+        if entry.reason is not None
+    ]
+    async with store.sessions().begin() as session:
+        job, job_version = await load_confirmed_job(session, job_id, user.id)
+        batch_evaluation, accepted = await queue_resume_batch(
+            session, request, job, job_version, user.id, entries
+        )
+    return {
+        "batchEvaluationId": batch_evaluation.id if batch_evaluation else None,
+        "accepted": accepted,
+        "rejected": rejected,
+    }
+
+
+async def load_confirmed_job(
+    session: AsyncSession, job_id: str, user_id: str
+) -> tuple[Job, JobVersion]:
+    job = await session.get(Job, job_id)
+    if job is None:
+        raise APIError(404, "NOT_FOUND", "Job not found")
+    await require_write_membership(session, job.organization_id, user_id)
+    job_version = await latest_job_version(session, job.id)
+    if job_version.confirmed_at is None:
+        raise APIError(409, "REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed")
+    return job, job_version
+
+
+async def queue_resume_batch(
+    session: AsyncSession,
+    request: Request,
+    job: Job,
+    job_version: JobVersion,
+    user_id: str,
+    entries: list[BatchEntry],
+) -> tuple[BatchEvaluation | None, list[dict[str, str]]]:
+    """Queue validated resume entries as independent submissions in one batch evaluation."""
+    batch_evaluation: BatchEvaluation | None = None
+    if any(entry.content is not None for entry in entries):
+        batch_evaluation = create_batch_evaluation(job, job_version, user_id)
+        session.add(batch_evaluation)
+        await session.flush()
+    storage = LocalObjectStorage(Path(request.app.state.settings.storage_root))
+    accepted: list[dict[str, str]] = []
+    for entry in entries:
+        if entry.content is None:
+            continue
+        validated = validate_document(
+            entry.content, media_type_for_name(entry.name), entry.name
+        )
+        candidate = CandidateRecord(id=new_id(), organization_id=job.organization_id)
+        document = ResumeDocument(
+            id=new_id(),
+            organization_id=job.organization_id,
+            candidate_record_id=candidate.id,
+            storage_key=f"resumes/{new_id()}{validated.extension}",
+            checksum=sha256(entry.content).hexdigest(),
+            media_type=validated.media_type,
+            size_bytes=len(entry.content),
+            original_name=entry.name,
+            retention_date=datetime.now(UTC) + timedelta(days=90),
+        )
+        version = ResumeVersion(
+            id=new_id(),
+            organization_id=job.organization_id,
+            resume_document_id=document.id,
+            version=1,
+        )
+        submission = ResumeSubmission(
+            id=new_id(),
+            organization_id=job.organization_id,
+            job_id=job.id,
+            candidate_record_id=candidate.id,
+            resume_version_id=version.id,
+            submitting_user_id=user_id,
+        )
+        processing = ProcessingJob(
+            id=new_id(),
+            type="resume_processing",
+            payload_reference=version.id,
+            idempotency_key=new_id(),
+        )
+        evaluation = Evaluation(
+            id=new_id(),
+            batch_evaluation_id=batch_evaluation.id if batch_evaluation else None,
+            resume_submission_id=submission.id,
+            job_version_id=job_version.id,
+            resume_version_id=version.id,
+            scoring_policy_version=SCORING_POLICY_VERSION,
+        )
+        await reserve_for_employer_evaluation(
+            session, job.organization_id, evaluation, request.app.state.settings.billing
+        )
+        batch_submission = (
+            BatchEvaluationSubmission(
+                organization_id=job.organization_id,
+                job_id=job.id,
+                batch_evaluation_id=batch_evaluation.id,
+                resume_submission_id=submission.id,
+            )
+            if batch_evaluation
+            else None
+        )
+        await add_resume_chain(
+            session,
+            candidate,
+            document,
+            version,
+            submission,
+            processing,
+            evaluation,
+            batch_submission,
+        )
+        storage.put(document.storage_key, entry.content)
+        accepted.append(
+            {
+                "name": entry.name,
+                "processingJobId": processing.id,
+                "submissionId": submission.id,
+                "evaluationId": evaluation.id,
+            }
+        )
+    return batch_evaluation, accepted
 
 
 @router.post(
