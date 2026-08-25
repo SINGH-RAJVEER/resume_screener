@@ -114,6 +114,9 @@ p {
 	display: flex;
 	gap: 1rem;
 }
+.public-header .brand-mark img {
+	height: 2rem;
+}
 .public-header nav a:not([data-slot="button"]) {
 	color: var(--ink);
 	font-size: 0.8125rem;
