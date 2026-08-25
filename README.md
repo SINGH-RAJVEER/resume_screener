@@ -7,7 +7,7 @@ Employers create roles, confirm the criteria that matter, upload or invite
 resumes, and review ranked, evidence-cited evaluations against those criteria.
 
 Every score traces back to quoted text from the source document. The model
-stages (extraction and requirement assessment) run through OpenRouter with
+stages, extraction and requirement assessment, run through OpenRouter with
 strict JSON schemas, and their output is validated locally before anything is
 stored. If no API key is configured, or a model call fails, everything falls
 back to deterministic parsing and scoring. The system never lets a model erase
@@ -20,18 +20,32 @@ What works today:
 - Email auth with separate employer and candidate account types.
 - Candidate private evaluations: PDF/DOCX/TXT upload, optional job description,
   scored report, suggestions, corrected resume download.
-- Employer workspace: organizations, members with owner/recruiter/viewer
-  roles, jobs with draft criteria extracted from descriptions, criteria
-  confirmation into immutable versions, single and ZIP batch resume uploads,
-  candidate invitations by link or passcode gated on an application window.
+- Employer workspace: organizations with email-domain join policies, members
+  with owner/recruiter/viewer roles, jobs with draft criteria extracted from
+  descriptions, criteria confirmation into immutable versions, single and ZIP
+  batch resume uploads, candidate invitations by link or passcode gated on an
+  application window.
 - Evaluations: deterministic skill matching against an O*NET-backed vocabulary,
-  OpenRouter fact extraction, per-requirement assessment with cited evidence,
-  weighted scores, hard-gate eligibility, CSV export.
+  OpenRouter fact extraction and block embeddings for semantic evidence, with a
+  content-hash cache so repeated blocks cost nothing, per-requirement
+  assessment with cited evidence, weighted scores, hard-gate eligibility, CSV
+  export with selectable columns.
+- Points billing: ledgers for user and organization accounts, one free
+  evaluation per calendar week for independent users, one-time Razorpay
+  payments in INR, employer batch billing, and manually provisioned enterprise
+  entitlements.
+- Retention: resumes and everything derived from them expire after a
+  configurable number of days. The API sweeps expired data on a schedule, and
+  an operator can trigger a pass manually.
+- Tracing and metrics through OpenTelemetry when an OTLP endpoint is set.
 
-What is not built yet: retention and deletion scheduling, the employer
-review-decision screen, full cost and latency telemetry, and calibration
-against labeled data. The specs in `docs/specs/` describe the full intended
-product.
+`POST /api/demo/session` seeds a pre-populated workspace and returns a token
+for either a demo employer or a demo candidate.
+
+What is not built yet: the employer review-decision screen, the full set of
+cost and latency telemetry, calibration against labeled data, and the
+remaining evaluation test suite. The specs in `docs/specs/` describe the full
+intended product.
 
 ## Layout
 
@@ -66,9 +80,14 @@ POSTGRES_PASSWORD=change-me
 JWT_SECRET=some-secret-at-least-32-characters-long
 # optional, enables the model stages:
 OPENROUTER_API_KEY=sk-or-...
+# optional, enables Razorpay point packs and webhooks:
+RAZORPAY_KEY_ID=...
+RAZORPAY_KEY_SECRET=...
+# optional, enables admin endpoints (retention sweep, enterprise provisioning):
+ADMIN_TOKEN=some-admin-token
 ```
 
-Then:
+`.env.example` documents every variable with its default. Then:
 
 ```sh
 docker compose up --build
@@ -92,6 +111,8 @@ export JWT_SECRET="some-secret-at-least-32-characters-long"
 export STORAGE_ROOT=".local-storage"
 export OPENROUTER_API_KEY="sk-or-..."   # optional
 ```
+
+`.env.example` documents every variable with its default.
 
 2. API, in one terminal:
 
