@@ -22,6 +22,9 @@ build/
 *.log
 bun-debug.log*
 
+# Runtime uploads
+.local-storage/
+
 # OS files
 .DS_Store
 Thumbs.db

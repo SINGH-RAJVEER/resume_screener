@@ -60,7 +60,9 @@ async def reserve(sessions: async_sessionmaker[AsyncSession], *args: object):
         return await reserve_in_session(session, *args)  # type: ignore[arg-type]
 
 
-async def settle(sessions: async_sessionmaker[AsyncSession], reservation_id: str, amount: int, reason: str) -> None:
+async def settle(
+    sessions: async_sessionmaker[AsyncSession], reservation_id: str, amount: int, reason: str
+) -> None:
     async with sessions.begin() as session:
         await settle_in_session(session, reservation_id, amount, reason)
 
