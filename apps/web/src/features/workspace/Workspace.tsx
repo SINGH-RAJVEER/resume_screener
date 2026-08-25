@@ -355,7 +355,10 @@ export const Workspace = () => {
 	if (isPending) {
 		return (
 			<main className="workspace-page">
-				<p className="empty-state">Loading workspace...</p>
+				<p className="empty-state loading-inline" role="status">
+					<ThinkingOrb aria-hidden size={20} state="solving" />
+					Loading workspace...
+				</p>
 			</main>
 		);
 	}
@@ -1270,7 +1273,14 @@ export const Workspace = () => {
 								</div>
 							))}
 							{members.length === 0 && (
-								<p className="muted-copy">Loading members...</p>
+								<p className="muted-copy loading-inline">
+									<ThinkingOrb
+										aria-hidden
+										size={20}
+										state="solving"
+									/>
+									Loading members...
+								</p>
 							)}
 						</div>
 						{currentOrg?.role === "owner" && (

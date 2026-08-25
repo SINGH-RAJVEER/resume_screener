@@ -4,6 +4,7 @@ import { Label } from "@skillsignal/ui/components/label";
 import { CheckCircle2, UploadCloud } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { ThinkingOrb } from "thinking-orbs";
 import { candidateClient } from "../features/candidate/client";
 import { authClient } from "../lib/auth-client";
 
@@ -41,7 +42,14 @@ export const InvitationUpload = () => {
 		};
 	}, [session, token]);
 
-	if (isPending) return <main className="app-shell">Loading...</main>;
+	if (isPending) {
+		return (
+			<main className="app-shell loading-page" role="status">
+				<ThinkingOrb aria-hidden size={64} state="solving" />
+				<p>Loading...</p>
+			</main>
+		);
+	}
 	if (!token) return <Navigate replace to="/" />;
 	if (!session) {
 		const returnTo = encodeURIComponent(`/apply/${token}`);

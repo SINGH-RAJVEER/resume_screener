@@ -275,7 +275,10 @@ export const PrivateEvaluationWorkspace = () => {
 					</div>
 				)}
 				{isLoadingHistory ? (
-					<p className="candidate-empty">Loading your checks...</p>
+					<p className="candidate-empty loading-inline" role="status">
+						<ThinkingOrb aria-hidden size={20} state="solving" />
+						Loading your checks...
+					</p>
 				) : historyIsUnavailable ? null : privateHistory.length ===
 					0 ? (
 					<p className="candidate-empty">
