@@ -108,7 +108,11 @@ export const MembersDialog = ({
 		setJoinPolicy(await workspaceClient.joinPolicy(organizationId));
 	};
 
+	const [buyingPack, setBuyingPack] = useState(false);
+
 	const buyOrgPoints = async (packId: string) => {
+		if (buyingPack) return;
+		setBuyingPack(true);
 		try {
 			const order = await billingClient.createOrder(
 				packId,
@@ -138,6 +142,8 @@ export const MembersDialog = ({
 			});
 		} catch (reason) {
 			onError(reason);
+		} finally {
+			setBuyingPack(false);
 		}
 	};
 
@@ -453,6 +459,7 @@ export const MembersDialog = ({
 									))}
 								</select>
 								<Button
+									disabled={buyingPack}
 									onClick={() => {
 										const select = document.getElementById(
 											"org-point-pack",
@@ -463,7 +470,9 @@ export const MembersDialog = ({
 									size="sm"
 									type="button"
 								>
-									Buy points
+									{buyingPack
+										? "Opening checkout"
+										: "Buy points"}
 								</Button>
 							</form>
 						)}
