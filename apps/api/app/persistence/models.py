@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -8,7 +9,6 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
-    JSON,
     Text,
     UniqueConstraint,
     func,
@@ -18,10 +18,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..domain.versions import (
-	JOB_REQUIREMENTS_COMPILER_VERSION,
-	JOB_REQUIREMENTS_PROMPT_VERSION,
-	PARSER_CONFIGURATION_VERSION,
-	SCORING_POLICY_VERSION,
+    JOB_REQUIREMENTS_COMPILER_VERSION,
+    JOB_REQUIREMENTS_PROMPT_VERSION,
+    PARSER_CONFIGURATION_VERSION,
+    SCORING_POLICY_VERSION,
 )
 
 

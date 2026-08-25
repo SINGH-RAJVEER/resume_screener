@@ -65,7 +65,10 @@ async def test_quote_uses_cost_ceiling_above_the_minimum() -> None:
 
 
 async def test_minimum_charge_dominates_when_models_are_free() -> None:
-	settings = make_settings(price_ceiling_usd_per_million_input=0.0, price_ceiling_usd_per_million_output=0.0)
+	settings = make_settings(
+		price_ceiling_usd_per_million_input=0.0,
+		price_ceiling_usd_per_million_output=0.0,
+	)
 
 	assert point_quote(INDEPENDENT_QUOTE, settings).points == 10
 	assert settle_points(None, INDEPENDENT_QUOTE, settings) == 10
@@ -84,7 +87,6 @@ async def test_unknown_quote_kind_is_rejected() -> None:
 
 
 async def test_reservation_idempotency_key_reuses_the_existing_hold() -> None:
-	settings = make_settings()
 	session = await make_session()
 	account = await ensure_user_account(session, "user-1")
 	await session.commit()

@@ -24,7 +24,6 @@ from ..core.http import APIError
 from ..persistence.models import (
     OrganizationEntitlement,
     OrganizationMember,
-    PointAccount,
     PointLedgerEntry,
     RazorpayOrder,
     RazorpayPayment,
@@ -116,7 +115,10 @@ async def my_points(
                 "accountId": account.id,
                 "balance": await balance(session, account.id),
                 "available": await available_balance(session, account.id),
-                "allowance": {"freeUsedThisWeek": free_used, "resetsAt": next_reset(datetime.now(UTC)).isoformat()},
+                "allowance": {
+                    "freeUsedThisWeek": free_used,
+                    "resetsAt": next_reset(datetime.now(UTC)).isoformat(),
+                },
             }
         await require_membership(session, organization_id, user.id)
         account = await ensure_organization_account(session, organization_id)

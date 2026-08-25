@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import json
 from typing import cast
 
 import httpx
@@ -85,7 +84,9 @@ class RazorpayClient:
 		try:
 			body = response.json()
 		except ValueError as error:
-			raise RazorpayError(f"Razorpay returned invalid JSON ({response.status_code})") from error
+			raise RazorpayError(
+				f"Razorpay returned invalid JSON ({response.status_code})"
+			) from error
 		if not isinstance(body, dict):
 			raise RazorpayError("Razorpay returned an unexpected response shape")
 		if response.status_code >= 400:
