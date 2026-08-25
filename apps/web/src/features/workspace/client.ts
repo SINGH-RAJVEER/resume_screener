@@ -1,4 +1,11 @@
-const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+import { downloadFile, apiRequest as request } from "../../lib/api-client";
+import type {
+	OrderResponse,
+	PointPack,
+	PointsSummary,
+} from "../../lib/billing-types";
+
+export type { OrderResponse, PointPack, PointsSummary };
 
 export interface Organization {
 	id: string;
@@ -36,7 +43,6 @@ export interface Requirement {
 	evidence?: RequirementEvidence[];
 	sourceEvidence?: RequirementEvidence[];
 	confidence?: number;
-	signals?: string[];
 }
 
 export interface RequirementEvidence {
@@ -152,25 +158,6 @@ export const EXPORT_COLUMNS = [
 
 export type ExportColumn = (typeof EXPORT_COLUMNS)[number];
 
-const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-	const response = await fetch(`${baseURL}${path}`, {
-		...init,
-		headers: {
-			...(init?.body instanceof FormData
-				? {}
-				: { "Content-Type": "application/json" }),
-			Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
-			...init?.headers,
-		},
-	});
-	const body =
-		response.status === 204
-			? undefined
-			: ((await response.json()) as T & { message?: string });
-	if (!response.ok) throw new Error(body?.message ?? "Request failed");
-	return body as T;
-};
-
 export const workspaceClient = {
 	organizations: () => request<Organization[]>("/api/organizations"),
 	createOrganization: (name: string) =>
@@ -219,22 +206,11 @@ export const workspaceClient = {
 			params.append("labels", label);
 		}
 		const query = params.size ? `?${params.toString()}` : "";
-		const response = await fetch(
-			`${baseURL}/api/jobs/${jobId}/evaluations.csv${query}`,
-			{
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
-				},
-			},
+		await downloadFile(
+			`/api/jobs/${jobId}/evaluations.csv${query}`,
+			"evaluations.csv",
+			"Export failed",
 		);
-		if (!response.ok) throw new Error("Export failed");
-		const blob = await response.blob();
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = "evaluations.csv";
-		anchor.click();
-		URL.revokeObjectURL(url);
 	},
 	createJob: (
 		organizationId: string,
@@ -266,14 +242,6 @@ export const workspaceClient = {
 				})),
 			}),
 		}),
-	uploadResume: (jobId: string, file: File) => {
-		const body = new FormData();
-		body.append("file", file);
-		return request<{ processingJobId: string; submissionId: string }>(
-			`/api/jobs/${jobId}/resumes`,
-			{ method: "POST", body },
-		);
-	},
 	uploadResumeBatch: (jobId: string, archive: File) => {
 		const body = new FormData();
 		body.append("archive", archive);
@@ -365,33 +333,9 @@ export const workspaceClient = {
 		),
 };
 
-export interface PointPack {
-	id: string;
-	points: number;
-	amountInr: number;
-}
-
-export interface OrgPoints {
-	scope: string;
-	organizationId?: string;
-	balance: number;
-	available: number;
-	enterprise?: boolean;
-}
-
-export interface OrderResponse {
-	id: string;
-	razorpayOrderId: string;
-	razorpayKeyId: string;
-	amountInr: number;
-	currency: string;
-	packId: string;
-	points: number;
-}
-
 export const billingClient = {
 	orgPoints: (organizationId: string) =>
-		request<OrgPoints>(
+		request<PointsSummary>(
 			`/api/me/points?organization_id=${encodeURIComponent(organizationId)}`,
 		),
 	packs: () => request<PointPack[]>("/api/billing/packs"),
@@ -417,10 +361,5 @@ export const billingClient = {
 					razorpay_signature: razorpaySignature,
 				}),
 			},
-		),
-	reconcile: (orderId: string) =>
-		request<{ payments: Array<Record<string, unknown>> }>(
-			`/api/billing/orders/${orderId}/reconcile`,
-			{ method: "POST" },
 		),
 };

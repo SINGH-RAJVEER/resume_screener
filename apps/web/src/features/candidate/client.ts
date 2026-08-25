@@ -1,23 +1,11 @@
-const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+import { downloadFile, apiRequest as request } from "../../lib/api-client";
+import type {
+	OrderResponse,
+	PointPack,
+	PointsSummary,
+} from "../../lib/billing-types";
 
-const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-	const response = await fetch(`${baseURL}${path}`, {
-		...init,
-		headers: {
-			...(init?.body instanceof FormData
-				? {}
-				: { "Content-Type": "application/json" }),
-			Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
-			...init?.headers,
-		},
-	});
-	const body =
-		response.status === 204
-			? undefined
-			: ((await response.json()) as T & { message?: string });
-	if (!response.ok) throw new Error(body?.message ?? "Request failed");
-	return body as T;
-};
+export type { OrderResponse, PointPack, PointsSummary };
 
 export const candidateClient = {
 	createIndependentEvaluation: (
@@ -39,24 +27,12 @@ export const candidateClient = {
 		request<IndependentEvaluation>(
 			`/api/independent-evaluations/${evaluationId}`,
 		),
-	downloadImprovedResume: async (evaluationId: string) => {
-		const response = await fetch(
-			`${baseURL}/api/independent-evaluations/${evaluationId}/improved-resume`,
-			{
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("auth_token") ?? ""}`,
-				},
-			},
-		);
-		if (!response.ok) throw new Error("Corrected resume is not available");
-		const blob = await response.blob();
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = "corrected-resume.docx";
-		anchor.click();
-		URL.revokeObjectURL(url);
-	},
+	downloadImprovedResume: (evaluationId: string) =>
+		downloadFile(
+			`/api/independent-evaluations/${evaluationId}/improved-resume`,
+			"corrected-resume.docx",
+			"Corrected resume is not available",
+		),
 	independentEvaluations: () =>
 		request<IndependentEvaluation[]>("/api/independent-evaluations"),
 	deleteIndependentEvaluation: (evaluationId: string) =>
@@ -110,28 +86,6 @@ export const candidateClient = {
 			evaluationId: string;
 		}>(`/api/jobs/${jobId}/resumes`, { method: "POST", body });
 	},
-};
-
-export type PointPack = { id: string; points: number; amountInr: number };
-
-export type OrderResponse = {
-	id: string;
-	razorpayOrderId: string;
-	razorpayKeyId: string;
-	amountInr: number;
-	currency: string;
-	packId: string;
-	points: number;
-};
-
-export type PointsSummary = {
-	scope: string;
-	balance: number;
-	available: number;
-	allowance?: {
-		freeUsedThisWeek: boolean;
-		resetsAt: string;
-	};
 };
 
 export type PointQuote = {

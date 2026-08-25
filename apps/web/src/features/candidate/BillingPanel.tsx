@@ -1,5 +1,6 @@
 import { Button } from "@skillsignal/ui/components/button";
 import { useEffect, useState } from "react";
+import { openCheckout } from "../../lib/razorpay";
 import {
 	candidateClient,
 	type OrderResponse,
@@ -8,28 +9,7 @@ import {
 	type PointsSummary,
 } from "./client";
 
-type RazorpayOptions = Record<string, unknown>;
-
-declare global {
-	interface Window {
-		Razorpay?: new (
-			options: Record<string, unknown>,
-		) => { open: () => void };
-	}
-}
-
-const loadCheckoutScript = () =>
-	new Promise<void>((resolve, reject) => {
-		if (window.Razorpay) return resolve();
-		const script = document.createElement("script");
-		script.src = "https://checkout.razorpay.com/v1/checkout.js";
-		script.onload = () => resolve();
-		script.onerror = () =>
-			reject(new Error("Payment checkout could not be loaded"));
-		document.head.appendChild(script);
-	});
-
-export const formatResetDate = (iso: string) =>
+const formatResetDate = (iso: string) =>
 	new Date(iso).toLocaleDateString(undefined, {
 		weekday: "long",
 		month: "short",
@@ -54,7 +34,11 @@ export const usePointsSummary = () => {
 	return {
 		points,
 		quote,
-		refreshPoints: () => void candidateClient.points().then(setPoints),
+		refreshPoints: () =>
+			void candidateClient
+				.points()
+				.then(setPoints)
+				.catch(() => setPoints(null)),
 	};
 };
 
@@ -97,25 +81,16 @@ export const PackPurchase = ({
 		setBuyingPackId(packId);
 		setError(null);
 		try {
-			await loadCheckoutScript();
 			const order: OrderResponse =
 				await candidateClient.createOrder(packId);
-			if (!window.Razorpay)
-				throw new Error("Payment checkout unavailable");
-			const checkout = new window.Razorpay({
+			await openCheckout({
 				key: order.razorpayKeyId,
-				order_id: order.razorpayOrderId,
-				amount: order.amountInr * 100,
+				orderId: order.razorpayOrderId,
+				amountPaise: order.amountInr * 100,
 				currency: order.currency,
 				name: "SkillSignal points",
 				description: `${order.points} points`,
-				prefill: {},
-				theme: { color: "#111111" },
-				handler: async (response: {
-					razorpay_order_id: string;
-					razorpay_payment_id: string;
-					razorpay_signature: string;
-				}) => {
+				handler: async (response) => {
 					try {
 						await candidateClient.verifyCheckout(
 							order.id,
@@ -131,8 +106,7 @@ export const PackPurchase = ({
 						);
 					}
 				},
-			} as RazorpayOptions);
-			checkout.open();
+			});
 		} catch (reason) {
 			setError(
 				reason instanceof Error ? reason.message : "Purchase failed",
