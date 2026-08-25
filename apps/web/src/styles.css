@@ -1666,3 +1666,63 @@ p {
 	gap: 1rem;
 	justify-content: space-between;
 }
+
+.tour-overlay {
+	inset: 0;
+	position: fixed;
+	z-index: 60;
+}
+.tour-spotlight {
+	border: 1px solid var(--ink);
+	border-radius: 6px;
+	box-shadow: 0 0 0 200vmax rgba(17, 17, 17, 0.5);
+	pointer-events: none;
+	transition:
+		top 0.25s ease,
+		left 0.25s ease,
+		width 0.25s ease,
+		height 0.25s ease;
+}
+.tour-card {
+	background: var(--bone);
+	border: 1px solid var(--ink);
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+	max-width: 22rem;
+	padding: 1.1rem 1.25rem;
+	position: fixed;
+	transition:
+		top 0.25s ease,
+		left 0.25s ease;
+	width: 22rem;
+}
+.tour-card h3 {
+	font-size: 1.1rem;
+	font-weight: 600;
+	margin: 0;
+}
+.tour-card p {
+	margin: 0;
+}
+.tour-card-head {
+	align-items: center;
+	display: flex;
+	gap: 0.75rem;
+	justify-content: space-between;
+}
+.tour-card-head .eyebrow {
+	margin: 0;
+}
+.tour-card-actions {
+	align-items: center;
+	border-top: 1px solid var(--rule);
+	display: flex;
+	gap: 0.75rem;
+	justify-content: space-between;
+	padding-top: 0.7rem;
+}
+.tour-card-buttons {
+	display: flex;
+	gap: 0.5rem;
+}

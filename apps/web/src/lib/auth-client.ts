@@ -138,15 +138,10 @@ const refreshSession = () => {
 	return refreshRequest;
 };
 
-const authenticate = async (
-	path: string,
-	credentials: Credentials | SignUpCredentials,
-) => authenticateWithBody(path, credentials);
-
 const authenticateWithBody = async (
 	path: string,
 	body: unknown,
-): Promise<Result<AuthResponse>> => {
+): Promise<AuthResult<AuthResponse>> => {
 	const result = await request<AuthResponse>(path, {
 		method: "POST",
 		body: JSON.stringify(body),
@@ -161,6 +156,11 @@ const authenticateWithBody = async (
 	}
 	return result;
 };
+
+const authenticate = async (
+	path: string,
+	credentials: Credentials | SignUpCredentials,
+) => authenticateWithBody(path, credentials);
 
 export const authClient = {
 	useSession: () => {
@@ -186,6 +186,8 @@ export const authClient = {
 		employer: (credentials: SignUpCredentials) =>
 			authenticate("/api/employer/auth/sign-up/email", credentials),
 	},
+	demo: (act: "employer" | "candidate") =>
+		authenticateWithBody("/api/demo/session", { act }),
 	signOut: async () => {
 		const result = await request<{ success: boolean }>(
 			"/api/auth/sign-out",

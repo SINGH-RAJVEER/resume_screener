@@ -1,4 +1,6 @@
 import { ThinkingOrb } from "thinking-orbs";
+import { TOUR_STEPS } from "./features/tour/steps";
+import { TourProvider } from "./features/tour/TourProvider";
 import { Workspace } from "./features/workspace/Workspace";
 import { authClient } from "./lib/auth-client";
 import { CandidateHome } from "./pages/CandidateHome";
@@ -16,10 +18,18 @@ const App = () => {
 		);
 	}
 	if (session?.user) {
-		return session.user.accountType === "employer" ? (
-			<Workspace />
-		) : (
-			<CandidateHome />
+		return (
+			<TourProvider
+				sessionAccountType={session.user.accountType}
+				sessionUserId={session.user.id}
+				steps={TOUR_STEPS}
+			>
+				{session.user.accountType === "employer" ? (
+					<Workspace />
+				) : (
+					<CandidateHome />
+				)}
+			</TourProvider>
 		);
 	}
 
