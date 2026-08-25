@@ -63,7 +63,7 @@ export const SignIn = () => {
 					<img src="/icon.webp" alt="SkillSignal" />
 				</div>
 				<header className="auth-heading">
-					<h1 id="sign-in-title">Welcome back</h1>
+					<h1 id="sign-in-title">Sign in</h1>
 					<p>Choose the workspace attached to your account.</p>
 				</header>
 
@@ -143,7 +143,7 @@ export const SignIn = () => {
 				</form>
 
 				<p className="auth-switch">
-					New here? <Link to={signUpPath}>Create an account</Link>
+					New here? <Link to={signUpPath}>Sign up</Link>
 				</p>
 			</section>
 		</main>

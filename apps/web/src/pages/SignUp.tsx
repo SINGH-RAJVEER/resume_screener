@@ -64,11 +64,7 @@ export const SignUp = () => {
 					<img src="/icon.webp" alt="SkillSignal" />
 				</div>
 				<header className="auth-heading">
-					<h1 id="sign-up-title">Create your account</h1>
-					<p>
-						Account types are separate so candidate data and
-						employer data stay isolated.
-					</p>
+					<h1 id="sign-up-title">Sign up</h1>
 				</header>
 
 				<fieldset className="account-type-control">

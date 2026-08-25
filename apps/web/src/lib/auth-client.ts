@@ -141,10 +141,15 @@ const refreshSession = () => {
 const authenticate = async (
 	path: string,
 	credentials: Credentials | SignUpCredentials,
-) => {
+) => authenticateWithBody(path, credentials);
+
+const authenticateWithBody = async (
+	path: string,
+	body: unknown,
+): Promise<Result<AuthResponse>> => {
 	const result = await request<AuthResponse>(path, {
 		method: "POST",
-		body: JSON.stringify(credentials),
+		body: JSON.stringify(body),
 	});
 	if (result.data) {
 		localStorage.setItem(tokenKey, result.data.token);
