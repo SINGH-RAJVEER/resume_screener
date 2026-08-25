@@ -43,9 +43,7 @@ class SingleUserStore:
             raise NotFoundError
         return self.user_record
 
-    async def apply_join_policies(
-        self, user_id: str, email: str
-    ) -> list[JoinedOrganization]:
+    async def apply_join_policies(self, user_id: str, email: str) -> list[JoinedOrganization]:
         return []
 
 

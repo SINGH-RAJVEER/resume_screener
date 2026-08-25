@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .api.billing_routes import router as billing_router
+from .api.demo_routes import router as demo_router
 from .api.routes import router
 from .core.config import Settings, load_settings
 from .core.http import (
@@ -95,6 +96,7 @@ def create_app(store: Store | None = None, settings: Settings | None = None) -> 
 
     application.include_router(router)
     application.include_router(billing_router)
+    application.include_router(demo_router)
     application.add_middleware(BodySizeLimitMiddleware)
     application.add_middleware(OriginGuardMiddleware, web_url=web_url)
     application.add_middleware(RequestLoggingMiddleware)
