@@ -5,7 +5,6 @@ Sources (download manually, license CC BY 4.0):
 		- Technology Skills.txt  -> technology skills with commodity categories
 		- Skills.txt             -> canonical cross-domain skills
 		- Knowledge.txt          -> canonical knowledge areas
-	Optional ESCO titles JSON produced by scripts/fetch_esco_titles.py.
 
 Writes worker/documents/skills_corpus.json. Deterministic: same inputs,
 same output bytes.

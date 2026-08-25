@@ -4,10 +4,6 @@ from typing import cast
 
 from docx import Document
 
-DOCX_MEDIA_TYPE = (
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
-
 
 def render_resume_docx(
 	facts: Mapping[str, object], suggestions: Sequence[Mapping[str, object]]
