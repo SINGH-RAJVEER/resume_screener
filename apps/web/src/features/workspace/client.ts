@@ -307,6 +307,16 @@ export const workspaceClient = {
 			rejected: Array<{ name: string; reason: string }>;
 		}>(`/api/jobs/${jobId}/resume-batches`, { method: "POST", body });
 	},
+	uploadResumeFiles: (jobId: string, files: File[]) => {
+		const body = new FormData();
+		for (const file of files) {
+			body.append("files", file);
+		}
+		return request<{
+			accepted: Array<{ name: string }>;
+			rejected: Array<{ name: string; reason: string }>;
+		}>(`/api/jobs/${jobId}/resume-batches/files`, { method: "POST", body });
+	},
 	createInvitation: (jobId: string, expiresInHours = 168) =>
 		request<{
 			id: string;

@@ -169,6 +169,8 @@ export const Workspace = () => {
 	const [requirements, setRequirements] = useState<Requirement[]>([]);
 	const [resumes, setResumes] = useState<File[]>([]);
 	const [uploadInputKey, setUploadInputKey] = useState(0);
+	const appendResumes = (files: File[]) =>
+		setResumes((current) => [...current, ...files]);
 	const [invitation, setInvitation] = useState<Invitation | null>(null);
 	const [inviteHours, setInviteHours] = useState(168);
 	const [copiedInvitation, setCopiedInvitation] = useState(false);
@@ -472,33 +474,51 @@ export const Workspace = () => {
 		event.preventDefault();
 		if (!selectedJob || resumes.length === 0) return;
 		try {
-			const hasArchive = resumes.some((resume) =>
+			const archives = resumes.filter((resume) =>
 				resume.name.toLowerCase().endsWith(".zip"),
 			);
-			if (hasArchive && resumes.length !== 1) {
-				setError(
-					"Upload one ZIP archive, or one or more resume documents.",
-				);
-				return;
+			const documents = resumes.filter(
+				(resume) => !resume.name.toLowerCase().endsWith(".zip"),
+			);
+			const outcomes = await Promise.allSettled([
+				...archives.map((archive) =>
+					workspaceClient.uploadResumeBatch(selectedJob.id, archive),
+				),
+				...(documents.length > 0
+					? [
+							workspaceClient.uploadResumeFiles(
+								selectedJob.id,
+								documents,
+							),
+						]
+					: []),
+			]);
+			const accepted: Array<{ name: string }> = [];
+			const rejected: Array<{ name: string; reason: string }> = [];
+			for (const outcome of outcomes) {
+				if (outcome.status === "fulfilled") {
+					accepted.push(...outcome.value.accepted);
+					rejected.push(...outcome.value.rejected);
+				} else {
+					rejected.push({
+						name: "Upload",
+						reason:
+							outcome.reason instanceof Error
+								? outcome.reason.message
+								: "Upload failed",
+					});
+				}
 			}
-			const [archive] = resumes;
-			if (!archive) return;
-			const result = hasArchive
-				? await workspaceClient.uploadResumeBatch(
-						selectedJob.id,
-						archive,
-					)
-				: await workspaceClient.uploadResumes(selectedJob.id, resumes);
 			setResumes([]);
 			setUploadInputKey((current) => current + 1);
 			await refreshEvaluations(selectedJob.id);
 			setActiveTab("results");
 			setNotice(
-				`${result.accepted.length} resume${result.accepted.length === 1 ? "" : "s"} queued.`,
+				`${accepted.length} resume${accepted.length === 1 ? "" : "s"} queued.`,
 			);
-			if (result.rejected.length) {
+			if (rejected.length) {
 				setError(
-					result.rejected
+					rejected
 						.map(
 							(rejection) =>
 								`${rejection.name}: ${rejection.reason}`,
@@ -1100,7 +1120,7 @@ export const Workspace = () => {
 									}
 									onSubmit={(event) => void upload(event)}
 									resumes={resumes}
-									setResumes={setResumes}
+									appendResumes={appendResumes}
 									uploadInputKey={uploadInputKey}
 								/>
 							)}
@@ -2204,7 +2224,7 @@ type UploadTabProps = {
 	confirmed: boolean;
 	resumes: File[];
 	uploadInputKey: number;
-	setResumes: (files: File[]) => void;
+	appendResumes: (files: File[]) => void;
 	onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 	onConfirmCriteria: () => void;
 };
@@ -2213,7 +2233,7 @@ const UploadTab = ({
 	confirmed,
 	resumes,
 	uploadInputKey,
-	setResumes,
+	appendResumes,
 	onSubmit,
 	onConfirmCriteria,
 }: UploadTabProps) => (
@@ -2241,14 +2261,28 @@ const UploadTab = ({
 					key={uploadInputKey}
 					multiple
 					onChange={(event) =>
-						setResumes(Array.from(event.currentTarget.files ?? []))
+						appendResumes(
+							Array.from(event.currentTarget.files ?? []),
+						)
 					}
 					required
 					type="file"
 				/>
+				<Input
+					{...({ webkitdirectory: "" } as Record<string, string>)}
+					id="resume-folder"
+					key={`folder-${uploadInputKey}`}
+					onChange={(event) =>
+						appendResumes(
+							Array.from(event.currentTarget.files ?? []),
+						)
+					}
+					type="file"
+				/>
 				<p className="form-hint">
-					Choose multiple PDF, DOCX, or TXT files, or exactly one ZIP
-					archive. Candidate names come from the resumes.
+					Choose multiple PDF, DOCX, or TXT files, select a whole
+					folder, or add ZIP archives. Unsupported files are reported
+					individually and candidate names come from the resumes.
 				</p>
 			</div>
 			<Button disabled={resumes.length === 0 || !confirmed} type="submit">
