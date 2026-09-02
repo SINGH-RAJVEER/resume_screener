@@ -1,0 +1,10 @@
+export const RESUME_FACTS_SCHEMA_VERSION = "3";
+export const JOB_REQUIREMENTS_SCHEMA_VERSION = "2";
+export const JOB_REQUIREMENTS_PROMPT_VERSION = "1";
+export const JOB_REQUIREMENTS_COMPILER_VERSION = "compiler-2";
+export const LOCAL_PARSER_VERSION = "local-2";
+export const PARSER_CONFIGURATION_VERSION = "resume-parser-2";
+export const EXTRACTION_PROMPT_VERSION = "3";
+export const REQUIREMENT_ASSESSMENT_SCHEMA_VERSION = "1";
+export const ASSESSMENT_PROMPT_VERSION = "1";
+export const SCORING_POLICY_VERSION = "criterion-weighted-1";

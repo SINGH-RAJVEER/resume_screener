@@ -7,7 +7,13 @@
 		"./config": "./src/config.ts",
 		"./db": "./src/db.ts",
 		"./schema": "./src/schema.ts",
-		"./queue": "./src/queue.ts"
+		"./queue": "./src/queue.ts",
+		"./versions": "./src/versions.ts",
+		"./billing": "./src/billing.ts",
+		"./points": "./src/points.ts",
+		"./retention": "./src/retention.ts",
+		"./storage": "./src/storage.ts",
+		"./telemetry": "./src/telemetry.ts"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.44.7",

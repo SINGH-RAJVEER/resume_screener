@@ -101,6 +101,22 @@ export const weeklyFreeUses = pgTable("weekly_free_use", {
 	id: id(), userId: text("user_id").notNull(), weekStart: timestamp("week_start", { withTimezone: true }).notNull(), createdAt: createdAt(),
 }, (table) => [unique("uq_weekly_free_use").on(table.userId, table.weekStart)]);
 
+export const organizationEntitlements = pgTable("organization_entitlement", {
+	id: id(), organizationId: text("organization_id").notNull(), provisionedBy: text("provisioned_by"), note: text("note"), createdAt: createdAt(),
+}, (table) => [unique("uq_organization_entitlement").on(table.organizationId)]);
+
+export const razorpayOrders = pgTable("razorpay_order", {
+	id: id(), razorpayOrderId: text("razorpay_order_id").notNull(), accountId: text("account_id").notNull(), purchaserUserId: text("purchaser_user_id").notNull(), packId: text("pack_id").notNull(), points: integer("points").notNull(), amountInr: integer("amount_inr").notNull(), currency: text("currency").notNull().default("INR"), status: text("status").notNull().default("created"), createdAt: createdAt(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [unique("uq_razorpay_order_id").on(table.razorpayOrderId)]);
+
+export const razorpayPayments = pgTable("razorpay_payment", {
+	id: id(), razorpayPaymentId: text("razorpay_payment_id").notNull(), orderRowId: text("order_row_id").notNull(), status: text("status").notNull(), method: text("method"), amountInr: integer("amount_inr").notNull(), refundedInr: integer("refunded_inr").notNull().default(0), pointsGranted: boolean("points_granted").notNull().default(false), signatureVerified: boolean("signature_verified").notNull().default(false), source: text("source").notNull(), createdAt: createdAt(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [unique("uq_razorpay_payment_id").on(table.razorpayPaymentId)]);
+
+export const razorpayWebhookEvents = pgTable("razorpay_webhook_event", {
+	id: id(), eventType: text("event_type").notNull(), payload: jsonb("payload").notNull(), receivedAt: createdAt(), processedAt: timestamp("processed_at", { withTimezone: true }),
+});
+
 export const requirementAssessments = pgTable("requirement_assessment", {
 	id: id(), evaluationId: text("evaluation_id").notNull(), jobRequirementId: text("job_requirement_id").notNull(), outcome: text("outcome").notNull(), confidence: integer("confidence").notNull(), reasoning: text("reasoning").notNull(), evidence: jsonb("evidence").notNull(), deterministicEvidence: jsonb("deterministic_evidence"), semanticEvidence: jsonb("semantic_evidence"), lexicalEvidence: jsonb("lexical_evidence"), createdAt: createdAt(),
 }, (table) => [unique("uq_assessment_evaluation_requirement").on(table.evaluationId, table.jobRequirementId)]);
@@ -110,5 +126,13 @@ export const batchEvaluationSubmissions = pgTable("batch_evaluation_submission",
 }, (table) => [primaryKey({ columns: [table.batchEvaluationId, table.resumeSubmissionId] })]);
 
 export const resumeBlockEmbeddings = pgTable("resume_block_embedding", { resumeVersionId: text("resume_version_id").notNull(), blockId: text("block_id").notNull(), model: text("model").notNull(), textHash: text("text_hash").notNull(), vector: jsonb("vector").notNull(), createdAt: createdAt() }, (table) => [primaryKey({ columns: [table.resumeVersionId, table.blockId, table.model] })]);
+
+export const embeddingCache = pgTable("embedding_cache", {
+	textHash: text("text_hash").primaryKey(), model: text("model").notNull(), vector: jsonb("vector").notNull(), createdAt: createdAt(),
+});
+
+export const reviewDecisions = pgTable("review_decision", {
+	id: id(), organizationId: text("organization_id").notNull(), batchEvaluationId: text("batch_evaluation_id").notNull(), evaluationId: text("evaluation_id").notNull(), reviewerUserId: text("reviewer_user_id").notNull(), eligibility: text("eligibility").notNull(), reason: text("reason").notNull(), createdAt: createdAt(),
+});
 
 export type ProcessingJob = typeof processingJobs.$inferSelect;
