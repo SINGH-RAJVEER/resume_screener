@@ -1,0 +1,22 @@
+{
+	"name": "@skillsignal/worker-new",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"scripts": {
+		"dev": "bun --watch src/index.ts",
+		"build": "bun build src/index.ts --outdir dist --target bun",
+		"start": "bun src/index.ts",
+		"typecheck": "tsgo --noEmit",
+		"lint": "biome check src/"
+	},
+	"dependencies": {
+		"@skillsignal/server-core": "workspace:*",
+		"drizzle-orm": "^0.44.7",
+		"postgres": "^3.4.7",
+		"zod": "^4.1.5"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.4.0"
+	}
+}

@@ -1,0 +1,365 @@
+import { zValidator } from "@hono/zod-validator";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { z } from "zod";
+import { createDatabase, type Database } from "@skillsignal/server-core/db";
+import { loadConfig, type ServerConfig } from "@skillsignal/server-core/config";
+import { batchEvaluations, candidateRecords, evaluations, independentEvaluations, invitations, jobRequirements, jobVersions, jobs, organizationAllowedEmails, organizationEmailDomains, organizationMembers, organizations, processingJobs, resumeDocuments, resumeSubmissions, resumeVersions, users } from "@skillsignal/server-core/schema";
+import { authenticate, issueToken, register, signIn, type AuthUser } from "./auth.ts";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { unzipSync } from "fflate";
+
+type Variables = { user: AuthUser };
+export type ApiApp = Hono<{ Variables: Variables }>;
+
+const credentials = z.object({ name: z.string().trim().min(1).max(100), email: z.string().email().max(254), password: z.string().min(8).max(72) });
+const signInBody = credentials.pick({ email: true, password: true });
+const requirement = z.object({ stableId: z.string().min(1), normalizedText: z.string().min(1), kind: z.enum(["required", "preferred", "ignored", "hard_gate"]), weight: z.number().int().positive() });
+const responseUser = (user: AuthUser) => ({ id: user.id, name: user.name, email: user.email, accountType: user.accountType, emailVerified: user.emailVerified, image: user.image, createdAt: user.createdAt, updatedAt: user.updatedAt });
+const error = (code: string, message: string, status: 400 | 401 | 403 | 404 | 409 | 500 | 503 = 400) => new Response(JSON.stringify({ code, message }), { status, headers: { "Content-Type": "application/json" } });
+
+const authResponse = async (user: AuthUser, config: ServerConfig) => {
+	const issued = await issueToken(user, config.jwtSecret, config.jwtTtlSeconds);
+	return { user: responseUser(user), token: issued.token, tokenType: "Bearer", expiresAt: issued.expiresAt };
+};
+
+const mediaTypes: Record<string, { mediaType: string; extension: string }> = {
+	".pdf": { mediaType: "application/pdf", extension: ".pdf" },
+	".docx": { mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", extension: ".docx" },
+	".txt": { mediaType: "text/plain", extension: ".txt" },
+};
+
+const validateUpload = (file: File): { mediaType: string; extension: string } => {
+	const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+	const expected = mediaTypes[extension];
+	if (!expected || file.size === 0 || file.size > 20 * 1024 * 1024) throw new Error("Document must be a PDF, DOCX, or TXT file between 1 byte and 20 MB");
+	if (file.type && file.type !== expected.mediaType) throw new Error("Document filename does not match its media type");
+	return expected;
+};
+
+const persistObject = async (root: string, key: string, content: Uint8Array): Promise<void> => {
+	const base = resolve(root);
+	const target = resolve(join(base, key));
+	if (!target.startsWith(`${base}/`)) throw new Error("Storage key escapes the configured root");
+	await mkdir(join(target, ".."), { recursive: true });
+	await Bun.write(target, content);
+};
+
+const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
+const randomPasscode = (): string => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
+
+export const createApp = (db: Database, config: ServerConfig): ApiApp => {
+	const app: ApiApp = new Hono();
+	app.use("*", cors({ origin: config.webUrl, allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
+	app.onError((err, c) => {
+		console.error("unhandled request error", { name: err.name });
+		return c.json({ code: "INTERNAL_ERROR", message: "Internal server error" }, 500);
+	});
+	app.use("/api/*", async (c, next) => {
+		const authorization = c.req.header("Authorization");
+		if (authorization?.startsWith("Bearer ")) {
+			const user = await authenticate(db, authorization.slice(7), config.jwtSecret);
+			if (user) c.set("user", user);
+		}
+		await next();
+	});
+	const requireUser = (c: import("hono").Context<{ Variables: Variables }>) => {
+		const user = c.get("user");
+		return user ?? null;
+	};
+
+	app.get("/health", (c) => c.json({ status: "ok" }));
+	app.post("/api/auth/sign-up/email", zValidator("json", credentials), async (c) => {
+		const body = c.req.valid("json");
+		try { return c.json(await authResponse(await register(db, body.name, body.email, body.password, "candidate"), config), 201); } catch (cause) { if (String(cause).includes("uq_user_email")) return error("EMAIL_ALREADY_EXISTS", "Email is already registered", 409); throw cause; }
+	});
+	app.post("/api/employer/auth/sign-up/email", zValidator("json", credentials), async (c) => {
+		const body = c.req.valid("json");
+		try { return c.json(await authResponse(await register(db, body.name, body.email, body.password, "employer"), config), 201); } catch (cause) { if (String(cause).includes("uq_user_email")) return error("EMAIL_ALREADY_EXISTS", "Email is already registered", 409); throw cause; }
+	});
+	app.post("/api/auth/sign-in/email", zValidator("json", signInBody), async (c) => { const body = c.req.valid("json"); const user = await signIn(db, body.email, body.password, "candidate"); return user ? c.json(await authResponse(user, config)) : error("INVALID_EMAIL_OR_PASSWORD", "Invalid email or password", 401); });
+	app.post("/api/employer/auth/sign-in/email", zValidator("json", signInBody), async (c) => { const body = c.req.valid("json"); const user = await signIn(db, body.email, body.password, "employer"); return user ? c.json(await authResponse(user, config)) : error("INVALID_EMAIL_OR_PASSWORD", "Invalid email or password", 401); });
+	app.post("/api/auth/sign-out", (c) => c.json({ success: true }));
+	app.get("/api/auth/session", (c) => { const user = requireUser(c); return c.json(user ? { user: responseUser(user) } : null); });
+	app.get("/api/me", (c) => { const user = requireUser(c); return user ? c.json({ user: responseUser(user) }) : error("UNAUTHORIZED", "Unauthorized", 401); });
+
+	app.get("/api/organizations", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		return c.json(await db.select({ id: organizations.id, name: organizations.name, role: organizationMembers.role }).from(organizationMembers).innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId)).where(eq(organizationMembers.userId, user.id)));
+	});
+	app.post("/api/organizations", zValidator("json", z.object({ name: z.string().trim().min(1).max(200) })), async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const body = c.req.valid("json");
+		const organizationId = crypto.randomUUID();
+		const result = await db.transaction(async (tx) => { const organization = (await tx.insert(organizations).values({ id: organizationId, name: body.name }).returning())[0]; await tx.insert(organizationMembers).values({ id: crypto.randomUUID(), organizationId, userId: user.id, role: "owner" }); return organization; });
+		return c.json(result, 201);
+	});
+
+	app.get("/api/organizations/:organizationId/jobs", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const organizationId = c.req.param("organizationId");
+		const membership = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!membership[0]) return error("NOT_FOUND", "Organization not found", 404);
+		const rows = await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.organizationId, organizationId)).orderBy(desc(jobs.createdAt), desc(jobVersions.version));
+		const latest = new Map<string, (typeof rows)[number]>();
+		for (const row of rows) if (!latest.has(row.job.id)) latest.set(row.job.id, row);
+		return c.json([...latest.values()].map(({ job, version }) => ({ id: job.id, title: job.title, versionId: version.id, confirmed: version.confirmedAt !== null })));
+	});
+
+	app.post("/api/jobs", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const body = await c.req.parseBody();
+		const organizationId = String(body["organization_id"] ?? "");
+		const title = String(body["title"] ?? "").trim();
+		const description = String(body["description"] ?? "").trim();
+		const file = body["file"] instanceof File ? body["file"] : null;
+		if (!organizationId || !title || (!description && !file) || (description && file)) return error("INVALID_REQUEST", "Provide a title and either a pasted description or a file", 400);
+		const membership = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!membership[0] || !["owner", "recruiter"].includes(membership[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		let sourceStorageKey: string | null = null;
+		let sourceText: string | null = description || null;
+		let sourceMediaType = "text/plain";
+		let content: Uint8Array | null = null;
+		if (file) { try { const media = validateUpload(file); sourceMediaType = media.mediaType; sourceStorageKey = `job-descriptions/${crypto.randomUUID()}${media.extension}`; content = new Uint8Array(await file.arrayBuffer()); } catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); } }
+		const jobId = crypto.randomUUID();
+		const versionId = crypto.randomUUID();
+		const processingId = crypto.randomUUID();
+		await db.transaction(async (tx) => {
+			await tx.insert(jobs).values({ id: jobId, organizationId, title });
+			await tx.insert(jobVersions).values({ id: versionId, jobId, version: 1, sourceText, normalizedText: sourceText, sourceMediaType, sourceStorageKey, promptVersion: "pending-ts-port", compilerVersion: "pending-ts-port" });
+			await tx.insert(processingJobs).values({ id: processingId, type: "job_description_processing", payloadReference: versionId, idempotencyKey: versionId });
+		});
+		if (sourceStorageKey && content) await persistObject(config.storageRoot, sourceStorageKey, content);
+		return c.json({ id: jobId, versionId, processingJobId: processingId }, 202);
+	});
+
+	app.get("/api/jobs/:jobId", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const jobId = c.req.param("jobId");
+		const jobResult = await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.id, jobId)).orderBy(desc(jobVersions.version)).limit(1);
+		const row = jobResult[0]; if (!row) return error("NOT_FOUND", "Job not found", 404);
+		const membership = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, row.job.organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!membership[0]) return error("NOT_FOUND", "Job not found", 404);
+		const requirements = await db.select().from(jobRequirements).where(eq(jobRequirements.jobVersionId, row.version.id));
+		return c.json({ id: row.job.id, organizationId: row.job.organizationId, title: row.job.title, applicationOpensAt: row.job.applicationOpensAt, applicationClosesAt: row.job.applicationClosesAt, description: row.version.sourceText, confirmed: row.version.confirmedAt !== null, draftStatus: row.version.draftRequirements ? "ready" : "processing", draftRequirements: (row.version.draftRequirements as { requirements?: unknown[] } | null)?.requirements ?? [], requirements: requirements.map((item) => ({ id: item.id, stableId: item.stableId, text: item.normalizedText, kind: item.kind, weight: item.weight, category: item.category, sourceModality: item.sourceModality, assessability: item.assessability, predicate: item.predicate, sourceEvidence: item.sourceEvidence })) });
+	});
+
+	app.post("/api/jobs/:jobId/requirements", zValidator("json", z.object({ requirements: z.array(requirement) })), async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const jobId = c.req.param("jobId"); const input = c.req.valid("json");
+		const result = await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.id, jobId)).orderBy(desc(jobVersions.version)).limit(1);
+		const current = result[0]; if (!current) return error("NOT_FOUND", "Job not found", 404);
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, current.job.organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		const versionId = crypto.randomUUID();
+		await db.transaction(async (tx) => {
+			await tx.insert(jobVersions).values({ id: versionId, jobId, version: current.version.version + 1, sourceText: current.version.sourceText, normalizedText: current.version.normalizedText, sourceMediaType: current.version.sourceMediaType, sourceStorageKey: current.version.sourceStorageKey, draftRequirements: current.version.draftRequirements, schemaVersion: current.version.schemaVersion, promptVersion: current.version.promptVersion, compilerVersion: current.version.compilerVersion, confirmedAt: new Date() });
+			await tx.insert(jobRequirements).values(input.requirements.map((item) => ({ id: crypto.randomUUID(), jobVersionId: versionId, stableId: item.stableId, normalizedText: item.normalizedText, kind: item.kind, weight: item.weight, sourceEvidence: [], predicate: {}, aliases: [], assessability: "resume_evidence", confirmedAt: new Date() })));
+		});
+		return c.json({ confirmed: true }, 201);
+	});
+
+	app.post("/api/jobs/:jobId/resumes", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const body = await c.req.parseBody(); const file = body["file"] instanceof File ? body["file"] : null; const invitationValue = typeof body["invitation_token"] === "string" ? body["invitation_token"] : "";
+		if (!file) return error("INVALID_REQUEST", "A resume file is required", 400);
+		let media: { mediaType: string; extension: string };
+		try { media = validateUpload(file); } catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); }
+		const jobId = c.req.param("jobId");
+		const result = await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.id, jobId)).orderBy(desc(jobVersions.version)).limit(1);
+		const current = result[0]; if (!current) return error("NOT_FOUND", "Job not found", 404);
+		let invitationId: string | null = null;
+		if (invitationValue) {
+			if (user.accountType !== "candidate") return error("FORBIDDEN", "Candidate account required", 403);
+			const invitation = (await db.select().from(invitations).where(eq(invitations.tokenHash, digest(invitationValue))).limit(1))[0] ?? (await db.select().from(invitations).where(eq(invitations.passcodeHash, digest(invitationValue.trim().toUpperCase()))).limit(1))[0];
+			if (!invitation || invitation.jobId !== jobId || invitation.redeemingUserId !== user.id || invitation.revokedAt || invitation.resumeSubmissionId || invitation.expiresAt <= new Date()) return error("NOT_FOUND", "Invitation is unavailable", 404);
+			invitationId = invitation.id;
+		} else {
+			if (user.accountType !== "employer") return error("FORBIDDEN", "Employer access required", 403);
+			const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, current.job.organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+			if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		}
+		if (!current.version.confirmedAt) return error("REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed", 409);
+		if (invitationId && (!current.job.applicationOpensAt || !current.job.applicationClosesAt || current.job.applicationOpensAt > new Date() || current.job.applicationClosesAt <= new Date())) return error("APPLICATIONS_CLOSED", "Job applications are not open", 409);
+		const content = new Uint8Array(await file.arrayBuffer()); const candidateId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const submissionId = crypto.randomUUID(); const batchId = crypto.randomUUID(); const evaluationId = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `resumes/${crypto.randomUUID()}${media.extension}`;
+		await db.transaction(async (tx) => {
+			await tx.insert(batchEvaluations).values({ id: batchId, organizationId: current.job.organizationId, jobId, jobVersionId: current.version.id, createdByUserId: user.id, requirementSchemaVersion: current.version.schemaVersion ?? "pending-ts-port", scoringPolicyVersion: "pending-ts-port" });
+			await tx.insert(candidateRecords).values({ id: candidateId, organizationId: current.job.organizationId, userId: invitationId ? user.id : null });
+			await tx.insert(resumeDocuments).values({ id: documentId, organizationId: current.job.organizationId, candidateRecordId: candidateId, storageKey, checksum: createHash("sha256").update(content).digest("hex"), mediaType: media.mediaType, sizeBytes: content.byteLength, originalName: file.name, retentionDate: new Date(Date.now() + 90 * 86400000) });
+			await tx.insert(resumeVersions).values({ id: versionId, organizationId: current.job.organizationId, resumeDocumentId: documentId, version: 1 });
+			await tx.insert(resumeSubmissions).values({ id: submissionId, organizationId: current.job.organizationId, jobId, candidateRecordId: candidateId, resumeVersionId: versionId, submittingUserId: user.id });
+			await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: current.version.id, resumeVersionId: versionId });
+			await tx.insert(processingJobs).values({ id: processingId, type: "resume_processing", payloadReference: versionId, idempotencyKey: versionId });
+		});
+		await persistObject(config.storageRoot, storageKey, content);
+		if (invitationId) await db.update(invitations).set({ resumeSubmissionId: submissionId }).where(eq(invitations.id, invitationId));
+		return c.json({ processingJobId: processingId, submissionId, evaluationId, batchEvaluationId: batchId }, 202);
+	});
+
+	app.post("/api/jobs/:jobId/resume-batches/files", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const body = await c.req.parseBody(); const files = Object.values(body).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is File => value instanceof File); if (!files.length || files.length > 500) return error("INVALID_REQUEST", "Batch must contain between 1 and 500 files", 400);
+		const job = (await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.id, c.req.param("jobId"))).orderBy(desc(jobVersions.version)).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); if (!job.version.confirmedAt) return error("REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed", 409);
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		const batchId = crypto.randomUUID(); await db.insert(batchEvaluations).values({ id: batchId, organizationId: job.job.organizationId, jobId: job.job.id, jobVersionId: job.version.id, createdByUserId: user.id, requirementSchemaVersion: job.version.schemaVersion ?? "pending-ts-port", scoringPolicyVersion: "pending-ts-port" });
+		const accepted: Array<Record<string, string>> = []; const rejected: Array<Record<string, string>> = [];
+		for (const file of files) {
+			try {
+				const media = validateUpload(file); const content = new Uint8Array(await file.arrayBuffer()); const candidateId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const submissionId = crypto.randomUUID(); const evaluationId = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `resumes/${crypto.randomUUID()}${media.extension}`;
+				await db.transaction(async (tx) => { await tx.insert(candidateRecords).values({ id: candidateId, organizationId: job.job.organizationId }); await tx.insert(resumeDocuments).values({ id: documentId, organizationId: job.job.organizationId, candidateRecordId: candidateId, storageKey, checksum: createHash("sha256").update(content).digest("hex"), mediaType: media.mediaType, sizeBytes: content.byteLength, originalName: file.name, retentionDate: new Date(Date.now() + 90 * 86400000) }); await tx.insert(resumeVersions).values({ id: versionId, organizationId: job.job.organizationId, resumeDocumentId: documentId, version: 1 }); await tx.insert(resumeSubmissions).values({ id: submissionId, organizationId: job.job.organizationId, jobId: job.job.id, candidateRecordId: candidateId, resumeVersionId: versionId, submittingUserId: user.id }); await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: job.version.id, resumeVersionId: versionId }); await tx.insert(processingJobs).values({ id: processingId, type: "resume_processing", payloadReference: versionId, idempotencyKey: versionId }); });
+				await persistObject(config.storageRoot, storageKey, content); accepted.push({ name: file.name, processingJobId: processingId, submissionId, evaluationId });
+			} catch (cause) { rejected.push({ name: file.name, reason: cause instanceof Error ? cause.message : "Invalid document" }); }
+		}
+		return c.json({ batchEvaluationId: accepted.length ? batchId : null, accepted, rejected }, 202);
+	});
+
+	app.post("/api/jobs/:jobId/resume-batches", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401); const body = await c.req.parseBody(); const archive = body["archive"] instanceof File ? body["archive"] : null; if (!archive) return error("INVALID_REQUEST", "A ZIP archive is required", 400);
+		let files: File[] = []; try { const entries = unzipSync(new Uint8Array(await archive.arrayBuffer())); for (const [name, bytes] of Object.entries(entries)) { if (!name || name.endsWith("/") || name.includes("..") || name.startsWith("/") || name.toLowerCase().endsWith(".zip")) continue; files.push(new File([bytes], name, { type: mediaTypes[name.slice(name.lastIndexOf(".")).toLowerCase()]?.mediaType ?? "application/octet-stream" })); } } catch { return error("INVALID_DOCUMENT", "Resume ZIP file is malformed", 400); }
+		const forwarded = new FormData(); for (const file of files) forwarded.append("files", file, file.name); const request = new Request(c.req.raw.url.replace(/\/resume-batches$/, "/resume-batches/files"), { method: "POST", headers: { Authorization: c.req.header("Authorization") ?? "", Origin: c.req.header("Origin") ?? "" }, body: forwarded }); return app.fetch(request);
+	});
+
+	app.post("/api/jobs/:jobId/invitations", zValidator("json", z.object({ expiresInHours: z.number().int().min(1).max(720).default(168) })), async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404);
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		if (!job.applicationOpensAt || !job.applicationClosesAt || job.applicationOpensAt > new Date() || job.applicationClosesAt <= new Date()) return error("APPLICATIONS_CLOSED", "Job applications are not open", 409);
+		const token = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); const passcode = randomPasscode(); const expiresAt = new Date(Date.now() + c.req.valid("json").expiresInHours * 3600000); const id = crypto.randomUUID();
+		await db.insert(invitations).values({ id, jobId: job.id, creatorUserId: user.id, tokenHash: digest(token), passcodeHash: digest(passcode), expiresAt });
+		return c.json({ id, token, passcode, expiresAt }, 201);
+	});
+
+	app.post("/api/independent-evaluations", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const body = await c.req.parseBody(); const file = body["file"] instanceof File ? body["file"] : null; if (!file) return error("INVALID_REQUEST", "A resume file is required", 400);
+		let media: { mediaType: string; extension: string }; try { media = validateUpload(file); } catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); }
+		const content = new Uint8Array(await file.arrayBuffer()); const id = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `independent-resumes/${crypto.randomUUID()}${media.extension}`; const description = typeof body["job_description"] === "string" ? body["job_description"].trim() : null;
+		await db.transaction(async (tx) => { await tx.insert(independentEvaluations).values({ id, userId: user.id, storageKey, originalName: file.name, mediaType: media.mediaType, jobDescription: description || null, status: "queued", retentionDate: new Date(Date.now() + 30 * 86400000) }); await tx.insert(processingJobs).values({ id: processingId, type: "independent_evaluation_processing", payloadReference: id, idempotencyKey: id }); });
+		await persistObject(config.storageRoot, storageKey, content);
+		return c.json({ id, processingJobId: processingId, freeEvaluation: true, reservedPoints: 0 }, 202);
+	});
+
+	app.get("/api/independent-evaluations", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const rows = await db.select().from(independentEvaluations).where(eq(independentEvaluations.userId, user.id)).orderBy(desc(independentEvaluations.createdAt));
+		return c.json(rows.map((item) => ({ id: item.id, status: item.status, score: item.score, originalName: item.originalName, createdAt: item.createdAt, completedAt: item.completedAt, safeError: item.safeError, hasImprovedResume: Boolean(item.improvedResumeKey) })));
+	});
+
+	app.get("/api/independent-evaluations/:evaluationId", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const item = (await db.select().from(independentEvaluations).where(and(eq(independentEvaluations.id, c.req.param("evaluationId")), eq(independentEvaluations.userId, user.id))).limit(1))[0]; if (!item) return error("NOT_FOUND", "Evaluation not found", 404);
+		return c.json({ id: item.id, status: item.status, score: item.score, originalName: item.originalName, createdAt: item.createdAt, completedAt: item.completedAt, safeError: item.safeError, suggestions: item.suggestions ?? [], facts: item.normalizedFacts ?? {}, hasImprovedResume: Boolean(item.improvedResumeKey) });
+	});
+
+	app.delete("/api/independent-evaluations/:evaluationId", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const item = (await db.select().from(independentEvaluations).where(and(eq(independentEvaluations.id, c.req.param("evaluationId")), eq(independentEvaluations.userId, user.id))).limit(1))[0]; if (!item) return error("NOT_FOUND", "Evaluation not found", 404);
+		await db.delete(processingJobs).where(and(eq(processingJobs.type, "independent_evaluation_processing"), eq(processingJobs.payloadReference, item.id))); await db.delete(independentEvaluations).where(eq(independentEvaluations.id, item.id)); return new Response(null, { status: 204 });
+	});
+
+	const redeem = async (c: import("hono").Context<{ Variables: Variables }>, value: string) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const invitation = (await db.select().from(invitations).where(eq(invitations.tokenHash, digest(value))).limit(1))[0] ?? (await db.select().from(invitations).where(eq(invitations.passcodeHash, digest(value.trim().toUpperCase()))).limit(1))[0];
+		if (!invitation || invitation.revokedAt || invitation.expiresAt <= new Date()) return error("NOT_FOUND", "Invitation is unavailable", 404);
+		if (invitation.redeemingUserId && invitation.redeemingUserId !== user.id) return error("INVITATION_REDEEMED", "Invitation was redeemed by another user", 409);
+		await db.update(invitations).set({ redeemingUserId: user.id }).where(eq(invitations.id, invitation.id));
+		return c.json({ jobId: invitation.jobId, invitationId: invitation.id });
+	};
+	app.post("/api/invitations/:token/redeem", (c) => redeem(c, c.req.param("token")));
+	app.post("/api/invitations/redeem", zValidator("json", z.object({ passcode: z.string().min(1) })), (c) => redeem(c, c.req.valid("json").passcode));
+
+	app.get("/api/organizations/:organizationId/members", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const organizationId = c.req.param("organizationId");
+		const access = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!access[0]) return error("NOT_FOUND", "Organization not found", 404);
+		const members = await db.select({ member: organizationMembers, user: { id: users.id, name: users.name, email: users.email } }).from(organizationMembers).innerJoin(users, eq(users.id, organizationMembers.userId)).where(eq(organizationMembers.organizationId, organizationId));
+		return c.json(members.map(({ member, user: memberUser }) => ({ userId: member.userId, name: memberUser.name, email: memberUser.email, role: member.role })));
+	});
+
+	app.post("/api/organizations/:organizationId/members", zValidator("json", z.object({ email: z.string().email(), role: z.enum(["recruiter", "viewer"]) })), async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401);
+		const organizationId = c.req.param("organizationId"); const input = c.req.valid("json");
+		const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403);
+		const memberUser = (await db.select().from(users).where(eq(users.email, input.email.toLowerCase())).limit(1))[0]; if (!memberUser || memberUser.accountType !== "employer") return error("NOT_FOUND", "Employer user not found", 404);
+		try { await db.insert(organizationMembers).values({ id: crypto.randomUUID(), organizationId, userId: memberUser.id, role: input.role }); } catch (cause) { if (String(cause).includes("uq_organization_member")) return error("MEMBER_EXISTS", "User is already a member", 409); throw cause; }
+		return c.json({ userId: memberUser.id, role: input.role }, 201);
+	});
+
+	app.delete("/api/organizations/:organizationId/members/:memberUserId", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403);
+		const member = (await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, c.req.param("memberUserId")))).limit(1))[0]; if (!member) return error("NOT_FOUND", "Organization member not found", 404); if (member.role === "owner") return error("OWNER_REQUIRED", "Organization owner cannot be removed", 409);
+		await db.delete(organizationMembers).where(eq(organizationMembers.id, member.id)); return new Response(null, { status: 204 });
+	});
+
+	app.get("/api/organizations/:organizationId/join-policy", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403);
+		const organization = (await db.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1))[0]; if (!organization) return error("NOT_FOUND", "Organization not found", 404); const domains = await db.select({ domain: organizationEmailDomains.domain }).from(organizationEmailDomains).where(eq(organizationEmailDomains.organizationId, organizationId)); const emails = await db.select({ email: organizationAllowedEmails.email }).from(organizationAllowedEmails).where(eq(organizationAllowedEmails.organizationId, organizationId)); return c.json({ defaultRole: organization.defaultMemberRole, domains: domains.map((item) => item.domain).sort(), emails: emails.map((item) => item.email).sort() });
+	});
+
+	app.put("/api/organizations/:organizationId/join-policy", zValidator("json", z.object({ defaultRole: z.enum(["recruiter", "viewer"]) })), async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403); const role = c.req.valid("json").defaultRole; await db.update(organizations).set({ defaultMemberRole: role, updatedAt: new Date() }).where(eq(organizations.id, organizationId)); return c.json({ defaultRole: role });
+	});
+
+	app.post("/api/organizations/:organizationId/join-policy/domains", zValidator("json", z.object({ domain: z.string().min(3).max(253) })), async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403); const domain = c.req.valid("json").domain.trim().toLowerCase().replace(/^@/, ""); if (!domain.includes(".") || /\s/.test(domain)) return error("INVALID_REQUEST", "Enter a valid email domain", 400); try { await db.insert(organizationEmailDomains).values({ id: crypto.randomUUID(), organizationId, domain }); } catch (cause) { if (String(cause).includes("uq_organization_email_domain")) return error("RULE_EXISTS", "Domain is already claimed", 409); throw cause; } return c.json({ domain }, 201);
+	});
+
+	app.post("/api/organizations/:organizationId/join-policy/emails", zValidator("json", z.object({ email: z.string().email() })), async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403); const email = c.req.valid("json").email.toLowerCase(); try { await db.insert(organizationAllowedEmails).values({ id: crypto.randomUUID(), organizationId, email }); } catch (cause) { if (String(cause).includes("uq_organization_allowed_email")) return error("RULE_EXISTS", "Email is already in the join policy", 409); throw cause; } return c.json({ email }, 201);
+	});
+
+	app.put("/api/jobs/:jobId/application-window", zValidator("json", z.object({ opensAt: z.coerce.date(), closesAt: z.coerce.date() })), async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401); const input = c.req.valid("json"); if (input.closesAt <= input.opensAt) return error("INVALID_REQUEST", "Application close must be after application open", 400);
+		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
+		await db.update(jobs).set({ applicationOpensAt: input.opensAt, applicationClosesAt: input.closesAt, updatedAt: new Date() }).where(eq(jobs.id, job.id)); return c.json({ opensAt: input.opensAt, closesAt: input.closesAt });
+	});
+
+	app.get("/api/jobs/:jobId/evaluations", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404);
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0]) return error("NOT_FOUND", "Job not found", 404);
+		const status = c.req.query("status");
+		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).where(status ? and(eq(resumeSubmissions.jobId, job.id), eq(evaluations.status, status)) : eq(resumeSubmissions.jobId, job.id));
+		const minimum = Number(c.req.query("minimumScore") ?? "0");
+		return c.json(rows.filter(({ evaluation }) => (evaluation.score ?? 0) >= minimum).map(({ evaluation, candidate }) => ({ id: evaluation.id, candidate: { id: candidate.id, name: candidate.fullName, email: candidate.email, location: candidate.location }, status: evaluation.status, score: evaluation.score, evidenceCoverage: evaluation.evidenceCoverage, eligibility: evaluation.eligibility, qualityState: evaluation.qualityState, rank: evaluation.rank })));
+	});
+
+	app.get("/api/jobs/:jobId/evaluations.csv", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0]) return error("NOT_FOUND", "Job not found", 404);
+		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).where(eq(resumeSubmissions.jobId, job.id));
+		const escape = (value: unknown): string => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }; const csv = ["candidate_name,candidate_email,status,score,evidence_coverage,eligibility", ...rows.map(({ evaluation, candidate }) => [candidate.fullName, candidate.email, evaluation.status, evaluation.score, evaluation.evidenceCoverage, evaluation.eligibility].map(escape).join(","))].join("\n"); return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${job.id}-evaluations.csv"` } });
+	});
+
+	app.get("/api/me/points", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const rows = await db.execute(sql`SELECT pa.id, COALESCE(SUM(le.amount), 0)::int AS balance FROM point_account pa LEFT JOIN point_ledger_entry le ON le.account_id = pa.id WHERE pa.owner_user_id = ${user.id} GROUP BY pa.id`);
+		const row = rows[0] as { id: string; balance: number } | undefined; return c.json({ accountId: row?.id ?? null, balance: row?.balance ?? 0 });
+	});
+
+	app.get("/api/billing/packs", (c) => {
+		try { return c.json(JSON.parse(Bun.env["RAZORPAY_PACKS"] ?? "[]")); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+	});
+
+	app.get("/api/billing/quote", (c) => c.json({ points: Number(Bun.env["MIN_POINTS_INDEPENDENT_EVALUATION"] ?? 10), inputTokenBudget: 0, outputTokenBudget: 0 }));
+
+	app.get("/api/billing/ledger", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const rows = await db.execute(sql`SELECT le.id, le.amount, le.reason, le.idempotency_key, le.created_at FROM point_ledger_entry le JOIN point_account pa ON pa.id = le.account_id WHERE pa.owner_user_id = ${user.id} ORDER BY le.created_at DESC LIMIT 200`); return c.json(rows);
+	});
+
+	app.get("/api/processing-jobs/:processingJobId", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const result = await db.select().from(processingJobs).where(eq(processingJobs.id, c.req.param("processingJobId"))).limit(1);
+		const processing = result[0]; if (!processing) return error("NOT_FOUND", "Processing job not found", 404);
+		return c.json({ id: processing.id, status: processing.status, safeError: processing.safeError, retryable: processing.status === "ready" && processing.attemptCount < processing.maximumAttempts });
+	});
+	return app;
+};
+
+export const bootstrap = () => { const config = loadConfig(); const { db, client } = createDatabase(config.databaseUrl); const app = createApp(db, config); return { app, client }; };

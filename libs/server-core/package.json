@@ -1,0 +1,20 @@
+{
+	"name": "@skillsignal/server-core",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"exports": {
+		"./config": "./src/config.ts",
+		"./db": "./src/db.ts",
+		"./schema": "./src/schema.ts",
+		"./queue": "./src/queue.ts"
+	},
+	"dependencies": {
+		"drizzle-orm": "^0.44.7",
+		"postgres": "^3.4.7"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.4.0",
+		"drizzle-kit": "^0.31.4"
+	}
+}

@@ -61,12 +61,25 @@ apps/
 	         reads uploaded files from shared storage.
 	web/     React 19 + Vite frontend. Candidate portal and employer
 	         workspace, shadcn-style UI components.
+	api-new/  Bun + Hono + Drizzle API port. It currently runs health,
+	          authentication, session, and initial organization endpoints while
+	          preserving the existing PostgreSQL schema and API contracts.
+	worker-new/ Bun queue-worker port. It contains the PostgreSQL lease,
+	            heartbeat, retry, and OpenRouter adapter seams. Document and
+	            evaluation stages are being ported incrementally.
 libs/
 	ui/      Shared UI component package used by web.
+	server-core/ Shared Bun database schema, configuration, and queue primitives.
 docs/
 	specs/       Product behavior, one file per area. The source of truth.
 	research/    Provider constraints, architecture research.
 ```
+
+The TypeScript ports are intentionally separate from the Python services during
+migration. They share the existing PostgreSQL tables and do not create or alter
+database migrations yet. Start them locally with `bun run --cwd apps/api-new
+dev` and `bun run --cwd apps/worker-new dev` after setting `JWT_SECRET` and
+`DATABASE_URL`.
 
 The worker's skill corpus (`apps/worker/worker/documents/skills_corpus.json`)
 is generated. Edit `scripts/build_skills_corpus.py`, never the JSON.
