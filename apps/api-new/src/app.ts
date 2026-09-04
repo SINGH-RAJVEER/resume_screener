@@ -5,12 +5,19 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createDatabase, type Database } from "@skillsignal/server-core/db";
 import { loadConfig, type ServerConfig } from "@skillsignal/server-core/config";
-import { batchEvaluations, candidateRecords, evaluations, independentEvaluations, invitations, jobRequirements, jobVersions, jobs, organizationAllowedEmails, organizationEmailDomains, organizationMembers, organizations, processingJobs, resumeDocuments, resumeSubmissions, resumeVersions, users } from "@skillsignal/server-core/schema";
+import { loadBillingSettings } from "@skillsignal/server-core/billing";
+import { availableBalance, balance, ensureOrganizationAccount, ensureUserAccount, grantInSession, releaseInSession, reserveInSession, InsufficientPointsError } from "@skillsignal/server-core/points";
+import { purgeExpiredData } from "@skillsignal/server-core/retention";
+import { LocalObjectStorage } from "@skillsignal/server-core/storage";
+import { batchEvaluations, candidateRecords, evaluations, independentEvaluations, invitations, jobRequirements, jobVersions, jobs, organizationAllowedEmails, organizationEmailDomains, organizationMembers, organizations, processingJobs, resumeDocuments, resumeSubmissions, resumeVersions, users, weeklyFreeUses } from "@skillsignal/server-core/schema";
 import { authenticate, issueToken, register, signIn, type AuthUser } from "./auth.ts";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { unzipSync } from "fflate";
+import { RazorpayClient, RazorpayError, RazorpayUnavailableError, verifyCheckoutSignature, verifyWebhookSignature, paymentEntity } from "./billing/razorpay.ts";
+import { INDEPENDENT_QUOTE, UnknownQuoteKindError, pointQuote } from "./billing/quotes.ts";
+import { claimFreeWeek, nextReset, weekStart } from "./billing/allowance.ts";
 
 type Variables = { user: AuthUser };
 export type ApiApp = Hono<{ Variables: Variables }>;
@@ -19,7 +26,7 @@ const credentials = z.object({ name: z.string().trim().min(1).max(100), email: z
 const signInBody = credentials.pick({ email: true, password: true });
 const requirement = z.object({ stableId: z.string().min(1), normalizedText: z.string().min(1), kind: z.enum(["required", "preferred", "ignored", "hard_gate"]), weight: z.number().int().positive() });
 const responseUser = (user: AuthUser) => ({ id: user.id, name: user.name, email: user.email, accountType: user.accountType, emailVerified: user.emailVerified, image: user.image, createdAt: user.createdAt, updatedAt: user.updatedAt });
-const error = (code: string, message: string, status: 400 | 401 | 403 | 404 | 409 | 500 | 503 = 400) => new Response(JSON.stringify({ code, message }), { status, headers: { "Content-Type": "application/json" } });
+const error = (code: string, message: string, status: 400 | 401 | 402 | 403 | 404 | 409 | 500 | 502 | 503 = 400) => new Response(JSON.stringify({ code, message }), { status, headers: { "Content-Type": "application/json" } });
 
 const authResponse = async (user: AuthUser, config: ServerConfig) => {
 	const issued = await issueToken(user, config.jwtSecret, config.jwtTtlSeconds);
@@ -50,6 +57,98 @@ const persistObject = async (root: string, key: string, content: Uint8Array): Pr
 
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
 const randomPasscode = (): string => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
+
+const OUTCOME_VALUES: Record<string, number> = { met: 1, partial: 0.5, not_met: 0 };
+const VALID_EVALUATION_STATUSES = new Set(["pending", "processing", "complete", "failed"]);
+const VALID_ASSESSMENT_OUTCOMES = new Set(["met", "partial", "not_met", "unknown"]);
+const EXPORT_COLUMNS: Record<string, string> = {
+	candidate_name: "candidate_name", candidate_email: "candidate_email", candidate_location: "candidate_location",
+	status: "status", score: "score", eligibility: "eligibility", evidence_coverage: "evidence_coverage",
+	quality_state: "quality_state", quality_warnings: "quality_warnings",
+};
+
+const contributionByIndex = (assessments: Array<{ outcome: string; kind: string; weight: number }>): Array<number | null> => {
+	const confidentWeight = assessments.filter((item) => item.kind !== "hard_gate" && item.outcome in OUTCOME_VALUES).reduce((sum, item) => sum + item.weight, 0);
+	return assessments.map((item) => {
+		const value = OUTCOME_VALUES[item.outcome];
+		return value === undefined || item.kind === "hard_gate" || !confidentWeight ? null : Math.round(value * item.weight / confidentWeight * 1000) / 10;
+	});
+};
+
+const csvSafe = (value: unknown): string => {
+	const text = String(value ?? "");
+	return ["=", "+", "-", "@", "\t", "\r"].some((prefix) => text.startsWith(prefix)) ? `'${text}` : text;
+};
+
+const escapeCsvCell = (value: unknown): string => {
+	const text = csvSafe(value);
+	return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+};
+
+const skillNamesFromFacts = (facts: unknown): string[] => {
+	if (typeof facts !== "object" || facts === null) return [];
+	const skills = (facts as Record<string, unknown>)["skills"];
+	if (!Array.isArray(skills)) return [];
+	const names = new Set<string>();
+	for (const skill of skills) {
+		if (typeof skill === "object" && skill !== null) {
+			const name = (skill as Record<string, unknown>)["canonicalName"];
+			if (typeof name === "string" && name.trim()) names.add(name.trim());
+		}
+	}
+	return [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+};
+
+const qualityFromVersion = (version: { qualityState: string; extractionBlocks: unknown; normalizedFacts: unknown }): { qualityState: string; qualityWarnings: string[] } => {
+	const blocks = (version.extractionBlocks ?? {}) as Record<string, unknown>;
+	const quality = (blocks["quality"] ?? {}) as Record<string, unknown>;
+	const normalized = (version.normalizedFacts ?? {}) as Record<string, unknown>;
+	const rawWarnings = Array.isArray(normalized["warnings"]) ? normalized["warnings"] : Array.isArray(quality["warnings"]) ? quality["warnings"] : [];
+	return { qualityState: version.qualityState, qualityWarnings: [...new Set((rawWarnings as unknown[]).filter((item): item is string => typeof item === "string"))] };
+};
+
+const isAdmin = (c: { req: { header: (name: string) => string | undefined } }): boolean => {
+	const token = c.req.header("x-admin-token") ?? "";
+	const expected = Bun.env["ADMIN_TOKEN"] ?? "";
+	return Boolean(expected) && token.length === expected.length && timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+};
+
+type BillingOrder = { id: string; account_id: string; pack_id: string; points: number; amount_inr: number };
+
+const grantForCaptured = async (db: Database, order: BillingOrder, paymentId: string, status: string): Promise<boolean> => {
+	if (status !== "captured" && status !== "authorized") return false;
+	const payment = (await db.execute(sql`SELECT points_granted FROM razorpay_payment WHERE razorpay_payment_id = ${paymentId}`))[0] as { points_granted: boolean } | undefined;
+	if (!payment || payment.points_granted) return false;
+	await grantInSession(db, order.account_id, order.points, `Razorpay purchase ${order.pack_id}`, `purchase:${paymentId}`);
+	await db.execute(sql`UPDATE razorpay_payment SET points_granted = true, updated_at = now() WHERE razorpay_payment_id = ${paymentId}`);
+	await db.execute(sql`UPDATE razorpay_order SET status = 'paid', updated_at = now() WHERE id = ${order.id}`);
+	return true;
+};
+
+const syncRefunds = async (db: Database, order: BillingOrder, payment: Record<string, unknown>): Promise<number> => {
+	const refunds = payment["refunds"];
+	if (!Array.isArray(refunds)) return 0;
+	let total = 0;
+	for (const refund of refunds) {
+		if (typeof refund !== "object" || refund === null) continue;
+		const entry = refund as Record<string, unknown>;
+		const refundId = String(entry["id"] ?? "");
+		const amountPaise = entry["amount"];
+		if (!refundId || typeof amountPaise !== "number") continue;
+		const existing = (await db.execute(sql`SELECT id FROM point_ledger_entry WHERE account_id = ${order.account_id} AND idempotency_key = ${`refund:${refundId}`}`))[0];
+		if (existing) continue;
+		const amountInr = Math.floor(amountPaise / 100);
+		const pointsBack = Math.ceil(order.points * amountInr / order.amount_inr);
+		await db.execute(sql`INSERT INTO point_ledger_entry (id, account_id, amount, reason, idempotency_key, created_at) VALUES (${crypto.randomUUID()}, ${order.account_id}, ${-pointsBack}, ${`Razorpay refund ${order.pack_id}`}, ${`refund:${refundId}`}, now())`);
+		total += amountInr;
+	}
+	if (total) {
+		await db.execute(sql`UPDATE razorpay_payment SET refunded_inr = refunded_inr + ${total}, updated_at = now() WHERE order_row_id = ${order.id} AND razorpay_payment_id = ${String(payment["id"] ?? "")}`);
+		const paid = (await db.execute(sql`SELECT refunded_inr FROM razorpay_payment WHERE order_row_id = ${order.id} AND razorpay_payment_id = ${String(payment["id"] ?? "")}`))[0] as { refunded_inr: number } | undefined;
+		if (paid && paid.refunded_inr >= order.amount_inr) await db.execute(sql`UPDATE razorpay_order SET status = 'refunded', updated_at = now() WHERE id = ${order.id}`);
+	}
+	return total;
+};
 
 export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 	const app: ApiApp = new Hono();
@@ -235,12 +334,53 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 
 	app.post("/api/independent-evaluations", async (c) => {
 		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
-		const body = await c.req.parseBody(); const file = body["file"] instanceof File ? body["file"] : null; if (!file) return error("INVALID_REQUEST", "A resume file is required", 400);
-		let media: { mediaType: string; extension: string }; try { media = validateUpload(file); } catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); }
-		const content = new Uint8Array(await file.arrayBuffer()); const id = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `independent-resumes/${crypto.randomUUID()}${media.extension}`; const description = typeof body["job_description"] === "string" ? body["job_description"].trim() : null;
-		await db.transaction(async (tx) => { await tx.insert(independentEvaluations).values({ id, userId: user.id, storageKey, originalName: file.name, mediaType: media.mediaType, jobDescription: description || null, status: "queued", retentionDate: new Date(Date.now() + 30 * 86400000) }); await tx.insert(processingJobs).values({ id: processingId, type: "independent_evaluation_processing", payloadReference: id, idempotencyKey: id }); });
+		const body = await c.req.parseBody();
+		const file = body["file"] instanceof File ? body["file"] : null;
+		if (!file) return error("INVALID_REQUEST", "A resume file is required", 400);
+		let media: { mediaType: string; extension: string };
+		try { media = validateUpload(file); } catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); }
+		const jobDescriptionFile = body["job_description_file"] instanceof File ? body["job_description_file"] : null;
+		const pastedDescription = typeof body["job_description"] === "string" ? body["job_description"].trim() : "";
+		if (jobDescriptionFile && pastedDescription) return error("INVALID_REQUEST", "Provide either a pasted description or a file, not both", 400);
+		if (pastedDescription.length > 100000) return error("INVALID_REQUEST", "Job description must be at most 100,000 characters", 400);
+		let jobDescriptionKey: string | null = null;
+		let jobDescriptionMediaType: string | null = null;
+		let jobDescriptionContent: Uint8Array | null = null;
+		if (jobDescriptionFile) {
+			try {
+				const described = validateUpload(jobDescriptionFile);
+				jobDescriptionMediaType = described.mediaType;
+				jobDescriptionKey = `independent-job-descriptions/${crypto.randomUUID()}${described.extension}`;
+				jobDescriptionContent = new Uint8Array(await jobDescriptionFile.arrayBuffer());
+			} catch (cause) { return error("INVALID_DOCUMENT", cause instanceof Error ? cause.message : "Invalid document", 400); }
+		}
+		const content = new Uint8Array(await file.arrayBuffer());
+		const id = crypto.randomUUID();
+		const processingId = crypto.randomUUID();
+		const storageKey = `independent-resumes/${crypto.randomUUID()}${media.extension}`;
+		let quote;
+		try { quote = pointQuote(INDEPENDENT_QUOTE, loadBillingSettings()); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		const account = await ensureUserAccount(db, user.id);
+		const claimedWeek = await claimFreeWeek(db, user.id, new Date());
+		let reservedPoints = 0;
+		let reservationId: string | null = null;
+		if (claimedWeek === null) {
+			try {
+				const reservation = await reserveInSession(db, account.id, quote.points, "independent_evaluation", `independent-evaluation:${id}`);
+				reservationId = reservation.id;
+				reservedPoints = quote.points;
+			} catch (cause) {
+				if (cause instanceof InsufficientPointsError) return error("INSUFFICIENT_POINTS", `This evaluation requires up to ${quote.points} points`, 402);
+				throw cause;
+			}
+		}
+		await db.transaction(async (tx) => {
+			await tx.insert(independentEvaluations).values({ id, userId: user.id, storageKey, originalName: file.name, mediaType: media.mediaType, jobDescription: pastedDescription || null, jobDescriptionKey, jobDescriptionMediaType, status: "queued", pointReservationId: reservationId, freeWeekStart: claimedWeek, retentionDate: new Date(Date.now() + (config.independentRetentionDays || 30) * 86400000) });
+			await tx.insert(processingJobs).values({ id: processingId, type: "independent_evaluation_processing", payloadReference: id, idempotencyKey: id });
+		});
 		await persistObject(config.storageRoot, storageKey, content);
-		return c.json({ id, processingJobId: processingId, freeEvaluation: true, reservedPoints: 0 }, 202);
+		if (jobDescriptionKey && jobDescriptionContent) await persistObject(config.storageRoot, jobDescriptionKey, jobDescriptionContent);
+		return c.json({ id, processingJobId: processingId, freeEvaluation: claimedWeek !== null, reservedPoints }, 202);
 	});
 
 	app.get("/api/independent-evaluations", async (c) => {
@@ -258,7 +398,22 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 	app.delete("/api/independent-evaluations/:evaluationId", async (c) => {
 		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
 		const item = (await db.select().from(independentEvaluations).where(and(eq(independentEvaluations.id, c.req.param("evaluationId")), eq(independentEvaluations.userId, user.id))).limit(1))[0]; if (!item) return error("NOT_FOUND", "Evaluation not found", 404);
+		if (item.pointReservationId) await releaseInSession(db, item.pointReservationId);
+		const storage = new LocalObjectStorage(config.storageRoot);
+		for (const key of [item.storageKey, item.jobDescriptionKey, item.improvedResumeKey]) if (key) await storage.delete(key);
 		await db.delete(processingJobs).where(and(eq(processingJobs.type, "independent_evaluation_processing"), eq(processingJobs.payloadReference, item.id))); await db.delete(independentEvaluations).where(eq(independentEvaluations.id, item.id)); return new Response(null, { status: 204 });
+	});
+
+	app.get("/api/independent-evaluations/:evaluationId/improved-resume", async (c) => {
+		const user = requireUser(c); if (!user || user.accountType !== "candidate") return error("UNAUTHORIZED", "Candidate access required", 401);
+		const item = (await db.select().from(independentEvaluations).where(and(eq(independentEvaluations.id, c.req.param("evaluationId")), eq(independentEvaluations.userId, user.id))).limit(1))[0];
+		if (!item || !item.improvedResumeKey) return error("NOT_FOUND", "Corrected resume is not available", 404);
+		try {
+			const content = await new LocalObjectStorage(config.storageRoot).get(item.improvedResumeKey);
+			return new Response(content as unknown as BodyInit, { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": 'attachment; filename="corrected-resume.docx"' } });
+		} catch {
+			return error("NOT_FOUND", "Corrected resume is not available", 404);
+		}
 	});
 
 	const redeem = async (c: import("hono").Context<{ Variables: Variables }>, value: string) => {
@@ -314,6 +469,24 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const organizationId = c.req.param("organizationId"); const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1); if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403); const email = c.req.valid("json").email.toLowerCase(); try { await db.insert(organizationAllowedEmails).values({ id: crypto.randomUUID(), organizationId, email }); } catch (cause) { if (String(cause).includes("uq_organization_allowed_email")) return error("RULE_EXISTS", "Email is already in the join policy", 409); throw cause; } return c.json({ email }, 201);
 	});
 
+	app.delete("/api/organizations/:organizationId/join-policy/domains/:domain", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const organizationId = c.req.param("organizationId");
+		const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1);
+		if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403);
+		await db.delete(organizationEmailDomains).where(and(eq(organizationEmailDomains.organizationId, organizationId), eq(organizationEmailDomains.domain, c.req.param("domain").toLowerCase())));
+		return new Response(null, { status: 204 });
+	});
+
+	app.delete("/api/organizations/:organizationId/join-policy/emails/:email", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const organizationId = c.req.param("organizationId");
+		const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1);
+		if (!owner[0]) return error("FORBIDDEN", "Owner access required", 403);
+		await db.delete(organizationAllowedEmails).where(and(eq(organizationAllowedEmails.organizationId, organizationId), eq(organizationAllowedEmails.email, c.req.param("email").toLowerCase())));
+		return new Response(null, { status: 204 });
+	});
+
 	app.put("/api/jobs/:jobId/application-window", zValidator("json", z.object({ opensAt: z.coerce.date(), closesAt: z.coerce.date() })), async (c) => {
 		const user = requireUser(c); if (!user || user.accountType !== "employer") return error("UNAUTHORIZED", "Employer access required", 401); const input = c.req.valid("json"); if (input.closesAt <= input.opensAt) return error("INVALID_REQUEST", "Application close must be after application open", 400);
 		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
@@ -324,39 +497,270 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
 		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404);
 		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0]) return error("NOT_FOUND", "Job not found", 404);
-		const status = c.req.query("status");
-		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).where(status ? and(eq(resumeSubmissions.jobId, job.id), eq(evaluations.status, status)) : eq(resumeSubmissions.jobId, job.id));
-		const minimum = Number(c.req.query("minimumScore") ?? "0");
-		return c.json(rows.filter(({ evaluation }) => (evaluation.score ?? 0) >= minimum).map(({ evaluation, candidate }) => ({ id: evaluation.id, candidate: { id: candidate.id, name: candidate.fullName, email: candidate.email, location: candidate.location }, status: evaluation.status, score: evaluation.score, evidenceCoverage: evaluation.evidenceCoverage, eligibility: evaluation.eligibility, qualityState: evaluation.qualityState, rank: evaluation.rank })));
+		const eligibilityFilter = c.req.queries("eligibility") ?? [];
+		const statusFilter = c.req.queries("status") ?? [];
+		const outcomeFilter = c.req.queries("outcome") ?? [];
+		if (statusFilter.length && !statusFilter.every((item) => VALID_EVALUATION_STATUSES.has(item))) return error("INVALID_REQUEST", "Unknown processing status filter", 400);
+		if (outcomeFilter.length && !outcomeFilter.every((item) => VALID_ASSESSMENT_OUTCOMES.has(item))) return error("INVALID_REQUEST", "Unknown requirement outcome filter", 400);
+		const minimumScore = c.req.query("minimum_score") ?? c.req.query("minimumScore");
+		const minimumCoverage = c.req.query("minimum_coverage") ?? c.req.query("minimumCoverage");
+		const search = (c.req.query("search") ?? "").trim().toLowerCase();
+		const skill = (c.req.query("skill") ?? "").trim().toLowerCase();
+		const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100), 1), 500);
+		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords, version: resumeVersions }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).innerJoin(resumeVersions, eq(resumeVersions.id, evaluations.resumeVersionId)).where(eq(resumeSubmissions.jobId, job.id));
+		let filtered = rows;
+		if (eligibilityFilter.length) filtered = filtered.filter(({ evaluation }) => eligibilityFilter.includes(evaluation.eligibility));
+		if (minimumScore !== undefined) filtered = filtered.filter(({ evaluation }) => (evaluation.score ?? -1) >= Number(minimumScore));
+		if (minimumCoverage !== undefined) filtered = filtered.filter(({ evaluation }) => (evaluation.evidenceCoverage ?? -1) >= Number(minimumCoverage));
+		if (statusFilter.length) filtered = filtered.filter(({ evaluation }) => statusFilter.includes(evaluation.status));
+		if (search) filtered = filtered.filter(({ candidate }) => (candidate.fullName ?? "").toLowerCase().includes(search) || (candidate.email ?? "").toLowerCase().includes(search));
+		if (skill) filtered = filtered.filter(({ version }) => skillNamesFromFacts(version.normalizedFacts).some((name) => name.toLowerCase().includes(skill)));
+		filtered = filtered.sort((a, b) => (b.evaluation.score ?? -1) - (a.evaluation.score ?? -1));
+		if (outcomeFilter.length) {
+			const matching = new Set<string>();
+			for (const { evaluation } of filtered) {
+				const assessments = await db.execute(sql`SELECT outcome FROM requirement_assessment WHERE evaluation_id = ${evaluation.id}`);
+				if ((assessments as unknown as Array<{ outcome: string }>).some((item) => outcomeFilter.includes(item.outcome))) matching.add(evaluation.id);
+			}
+			filtered = filtered.filter(({ evaluation }) => matching.has(evaluation.id));
+		}
+		const result = [];
+		for (const { evaluation, candidate, version } of filtered.slice(0, limit)) {
+			const assessments = await db.execute(sql`SELECT a.outcome, a.confidence, a.reasoning, a.evidence, a.semantic_evidence, a.lexical_evidence, r.normalized_text, r.kind, r.weight FROM requirement_assessment a JOIN job_requirement r ON r.id = a.job_requirement_id WHERE a.evaluation_id = ${evaluation.id}`);
+			const triples = (assessments as unknown as Array<{ outcome: string; kind: string; weight: number; normalized_text: string; confidence: number; reasoning: string; evidence: unknown; semantic_evidence: unknown; lexical_evidence: unknown }>).map((item) => ({ ...item }));
+			const contributions = contributionByIndex(triples);
+			const quality = qualityFromVersion({ qualityState: version.qualityState, extractionBlocks: version.extractionBlocks, normalizedFacts: version.normalizedFacts });
+			result.push({
+				id: evaluation.id, candidateName: candidate.fullName, candidateEmail: candidate.email, candidateLocation: candidate.location,
+				status: evaluation.status, score: evaluation.score, coverage: evaluation.evidenceCoverage, eligibility: evaluation.eligibility,
+				skills: skillNamesFromFacts(version.normalizedFacts),
+				hardGates: triples.filter((item) => item.kind === "hard_gate").map((item) => ({ requirement: item.normalized_text, outcome: item.outcome })),
+				...quality,
+				assessments: triples.map((item, index) => ({ requirement: item.normalized_text, outcome: item.outcome, kind: item.kind, weight: item.weight, contribution: contributions[index], reasoning: item.reasoning, evidence: item.evidence, semanticEvidence: item.semantic_evidence, lexicalEvidence: item.lexical_evidence })),
+			});
+		}
+		return c.json(result);
 	});
 
 	app.get("/api/jobs/:jobId/evaluations.csv", async (c) => {
-		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401); const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0]) return error("NOT_FOUND", "Job not found", 404);
-		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).where(eq(resumeSubmissions.jobId, job.id));
-		const escape = (value: unknown): string => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }; const csv = ["candidate_name,candidate_email,status,score,evidence_coverage,eligibility", ...rows.map(({ evaluation, candidate }) => [candidate.fullName, candidate.email, evaluation.status, evaluation.score, evaluation.evidenceCoverage, evaluation.eligibility].map(escape).join(","))].join("\n"); return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${job.id}-evaluations.csv"` } });
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const job = (await db.select().from(jobs).where(eq(jobs.id, c.req.param("jobId"))).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404);
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0]) return error("NOT_FOUND", "Job not found", 404);
+		const columns = c.req.queries("columns") ?? [];
+		const labels = c.req.queries("labels") ?? [];
+		const keys = columns.length ? [...new Set(columns)] : Object.keys(EXPORT_COLUMNS);
+		const unknown = keys.filter((key) => !(key in EXPORT_COLUMNS));
+		if (unknown.length) return error("INVALID_REQUEST", `Unknown export column: ${unknown[0]}`, 400);
+		if (labels.length && labels.length !== keys.length) return error("INVALID_REQUEST", "Export labels must match the selected columns", 400);
+		const headers = keys.map((key, index) => (labels[index]?.trim() || EXPORT_COLUMNS[key]) as string);
+		const rows = await db.select({ evaluation: evaluations, candidate: candidateRecords, version: resumeVersions }).from(evaluations).innerJoin(resumeSubmissions, eq(resumeSubmissions.id, evaluations.resumeSubmissionId)).innerJoin(candidateRecords, eq(candidateRecords.id, resumeSubmissions.candidateRecordId)).innerJoin(resumeVersions, eq(resumeVersions.id, evaluations.resumeVersionId)).where(eq(resumeSubmissions.jobId, job.id));
+		const lines = [headers.map(escapeCsvCell).join(",")];
+		for (const { evaluation, candidate, version } of rows) {
+			const quality = qualityFromVersion({ qualityState: version.qualityState, extractionBlocks: version.extractionBlocks, normalizedFacts: version.normalizedFacts });
+			const values: Record<string, unknown> = {
+				candidate_name: candidate.fullName ?? "", candidate_email: candidate.email ?? "", candidate_location: candidate.location ?? "",
+				status: evaluation.status, score: evaluation.score ?? "", eligibility: evaluation.eligibility,
+				evidence_coverage: evaluation.evidenceCoverage ?? "", quality_state: quality.qualityState, quality_warnings: quality.qualityWarnings.join("; "),
+			};
+			lines.push(keys.map((key) => escapeCsvCell(values[key])).join(","));
+		}
+		return new Response(lines.join("\n"), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${job.id}-evaluations.csv"` } });
 	});
 
 	app.get("/api/me/points", async (c) => {
 		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
-		const rows = await db.execute(sql`SELECT pa.id, COALESCE(SUM(le.amount), 0)::int AS balance FROM point_account pa LEFT JOIN point_ledger_entry le ON le.account_id = pa.id WHERE pa.owner_user_id = ${user.id} GROUP BY pa.id`);
-		const row = rows[0] as { id: string; balance: number } | undefined; return c.json({ accountId: row?.id ?? null, balance: row?.balance ?? 0 });
+		const organizationId = c.req.query("organization_id") ?? c.req.query("organizationId") ?? undefined;
+		if (!organizationId) {
+			const account = await ensureUserAccount(db, user.id);
+			const freeUsed = (await db.select({ id: weeklyFreeUses.id }).from(weeklyFreeUses).where(and(eq(weeklyFreeUses.userId, user.id), eq(weeklyFreeUses.weekStart, weekStart(new Date())))).limit(1))[0];
+			return c.json({ scope: "personal", accountId: account.id, balance: await balance(db, account.id), available: await availableBalance(db, account.id), allowance: { freeUsedThisWeek: Boolean(freeUsed), resetsAt: nextReset(new Date()).toISOString() } });
+		}
+		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id))).limit(1);
+		if (!member[0]) return error("NOT_FOUND", "Organization not found", 404);
+		const account = await ensureOrganizationAccount(db, organizationId);
+		const entitlement = (await db.execute(sql`SELECT id FROM organization_entitlement WHERE organization_id = ${organizationId} LIMIT 1`))[0];
+		return c.json({ scope: "organization", organizationId, accountId: account.id, balance: await balance(db, account.id), available: await availableBalance(db, account.id), enterprise: Boolean(entitlement) });
 	});
 
 	app.get("/api/billing/packs", (c) => {
-		try { return c.json(JSON.parse(Bun.env["RAZORPAY_PACKS"] ?? "[]")); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		try { return c.json(loadBillingSettings().packs.map((pack) => ({ id: pack.id, points: pack.points, amountInr: pack.amountInr }))); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
 	});
 
-	app.get("/api/billing/quote", (c) => c.json({ points: Number(Bun.env["MIN_POINTS_INDEPENDENT_EVALUATION"] ?? 10), inputTokenBudget: 0, outputTokenBudget: 0 }));
+	app.get("/api/billing/quote", (c) => {
+		const kind = c.req.query("kind") ?? INDEPENDENT_QUOTE;
+		try {
+			const quote = pointQuote(kind, loadBillingSettings());
+			return c.json({ kind: quote.kind, points: quote.points, minimumPoints: quote.minimumPoints, costCeilingPoints: quote.costCeilingPoints, lineItems: quote.lineItems.map((item) => ({ task: item.task, maxInputTokens: item.maxInputTokens, maxOutputTokens: item.maxOutputTokens })) });
+		} catch (cause) {
+			if (cause instanceof UnknownQuoteKindError) return error("INVALID_REQUEST", "Unknown quote kind", 400);
+			throw cause;
+		}
+	});
 
 	app.get("/api/billing/ledger", async (c) => {
 		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
-		const rows = await db.execute(sql`SELECT le.id, le.amount, le.reason, le.idempotency_key, le.created_at FROM point_ledger_entry le JOIN point_account pa ON pa.id = le.account_id WHERE pa.owner_user_id = ${user.id} ORDER BY le.created_at DESC LIMIT 200`); return c.json(rows);
+		const organizationId = c.req.query("organization_id") ?? c.req.query("organizationId") ?? undefined;
+		let accountId: string;
+		if (!organizationId) {
+			accountId = (await ensureUserAccount(db, user.id)).id;
+		} else {
+			const owner = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id), eq(organizationMembers.role, "owner"))).limit(1);
+			if (!owner[0]) return error("NOT_FOUND", "Organization not found", 404);
+			accountId = (await ensureOrganizationAccount(db, organizationId)).id;
+		}
+		const rows = await db.execute(sql`SELECT amount, reason, created_at FROM point_ledger_entry WHERE account_id = ${accountId} ORDER BY created_at DESC LIMIT 100`);
+		return c.json((rows as unknown as Array<{ amount: number; reason: string; created_at: string }>).map((entry) => ({ amount: entry.amount, reason: entry.reason, createdAt: entry.created_at })));
+	});
+
+	app.post("/api/billing/orders", zValidator("json", z.object({ packId: z.string().min(1), organizationId: z.string().optional() })), async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		let billing;
+		try { billing = loadBillingSettings(); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		const input = c.req.valid("json");
+		const pack = billing.packs.find((item) => item.id === input.packId);
+		if (!pack) return error("INVALID_PACK", "Unknown point pack", 400);
+		let client: RazorpayClient;
+		try { client = new RazorpayClient(billing.razorpayKeyId, billing.razorpayKeySecret); } catch (cause) { return error("SERVICE_UNAVAILABLE", cause instanceof Error ? cause.message : "Razorpay is unavailable", 503); }
+		const orderId = crypto.randomUUID();
+		let remote: Record<string, unknown>;
+		try { remote = await client.createOrder(pack.amountInr * 100, "INR", orderId, { packId: pack.id, points: String(pack.points) }); } catch (cause) { return error("SERVICE_UNAVAILABLE", cause instanceof RazorpayUnavailableError ? cause.message : cause instanceof RazorpayError ? cause.message : "Razorpay is unavailable", 503); }
+		const remoteId = typeof remote["id"] === "string" ? remote["id"] : null;
+		if (!remoteId) return error("SERVICE_UNAVAILABLE", "Razorpay order response is invalid", 503);
+		if (input.organizationId) {
+			const role = (await db.execute(sql`SELECT role FROM organization_member WHERE organization_id = ${input.organizationId} AND user_id = ${user.id} LIMIT 1`))[0] as { role: string } | undefined;
+			if (role?.role !== "owner") return error("NOT_FOUND", "Organization not found", 404);
+			const account = await ensureOrganizationAccount(db, input.organizationId);
+			await db.execute(sql`INSERT INTO razorpay_order (id, razorpay_order_id, account_id, purchaser_user_id, pack_id, points, amount_inr, currency, status, created_at, updated_at) VALUES (${orderId}, ${remoteId}, ${account.id}, ${user.id}, ${pack.id}, ${pack.points}, ${pack.amountInr}, 'INR', 'created', now(), now())`);
+		} else {
+			const account = await ensureUserAccount(db, user.id);
+			await db.execute(sql`INSERT INTO razorpay_order (id, razorpay_order_id, account_id, purchaser_user_id, pack_id, points, amount_inr, currency, status, created_at, updated_at) VALUES (${orderId}, ${remoteId}, ${account.id}, ${user.id}, ${pack.id}, ${pack.points}, ${pack.amountInr}, 'INR', 'created', now(), now())`);
+		}
+		return c.json({ id: orderId, razorpayOrderId: remoteId, razorpayKeyId: billing.razorpayKeyId, amountInr: pack.amountInr, currency: "INR", packId: pack.id, points: pack.points }, 201);
+	});
+
+	app.post("/api/billing/orders/:orderId/verify", zValidator("json", z.object({ razorpayPaymentId: z.string().min(1), razorpaySignature: z.string().min(1) })), async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		const order = (await db.execute(sql`SELECT ro.id, ro.razorpay_order_id FROM razorpay_order ro WHERE ro.id = ${c.req.param("orderId")} AND ro.purchaser_user_id = ${user.id}`))[0] as { id: string; razorpay_order_id: string } | undefined;
+		if (!order) return error("NOT_FOUND", "Order not found", 404);
+		const existing = (await db.execute(sql`SELECT signature_verified FROM razorpay_payment WHERE razorpay_payment_id = ${c.req.valid("json").razorpayPaymentId} AND order_row_id = ${order.id}`))[0] as { signature_verified: boolean } | undefined;
+		if (existing?.signature_verified) return c.json({ verified: true });
+		const input = c.req.valid("json");
+		let billing;
+		try { billing = loadBillingSettings(); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		if (!verifyCheckoutSignature(order.razorpay_order_id, input.razorpayPaymentId, input.razorpaySignature, billing.razorpayKeySecret)) {
+			return error("INVALID_SIGNATURE", "Checkout signature verification failed", 400);
+		}
+		await db.execute(sql`INSERT INTO razorpay_payment (id, razorpay_payment_id, order_row_id, status, amount_inr, points_granted, signature_verified, source, created_at, updated_at) SELECT ${crypto.randomUUID()}, ${input.razorpayPaymentId}, id, 'captured', amount_inr, false, true, 'checkout', now(), now() FROM razorpay_order WHERE id = ${order.id} ON CONFLICT (razorpay_payment_id) DO UPDATE SET signature_verified = true`);
+		return c.json({ verified: true });
+	});
+
+	app.post("/api/billing/orders/:orderId/reconcile", async (c) => {
+		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
+		let billing;
+		try { billing = loadBillingSettings(); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		let client: RazorpayClient;
+		try { client = new RazorpayClient(billing.razorpayKeyId, billing.razorpayKeySecret); } catch (cause) { return error("SERVICE_UNAVAILABLE", cause instanceof Error ? cause.message : "Razorpay is unavailable", 503); }
+		const order = (await db.execute(sql`SELECT id, razorpay_order_id, account_id, pack_id, points, amount_inr FROM razorpay_order WHERE id = ${c.req.param("orderId")} AND purchaser_user_id = ${user.id}`))[0] as { id: string; razorpay_order_id: string; account_id: string; pack_id: string; points: number; amount_inr: number } | undefined;
+		if (!order) return error("NOT_FOUND", "Order not found", 404);
+		let payments: Record<string, unknown>[];
+		try { payments = await client.orderPayments(order.razorpay_order_id); } catch (cause) { return error("SERVICE_UNAVAILABLE", cause instanceof Error ? cause.message : "Razorpay is unavailable", 503); }
+		const results = [];
+		for (const payment of payments) {
+			const paymentId = typeof payment["id"] === "string" ? payment["id"] : "";
+			const status = String(payment["status"] ?? "");
+			if (!paymentId) continue;
+			await db.execute(sql`INSERT INTO razorpay_payment (id, razorpay_payment_id, order_row_id, status, method, amount_inr, points_granted, signature_verified, source, created_at, updated_at) VALUES (${crypto.randomUUID()}, ${paymentId}, ${order.id}, ${status}, ${typeof payment["method"] === "string" ? payment["method"] : null}, ${order.amount_inr}, false, false, 'reconciliation', now(), now()) ON CONFLICT (razorpay_payment_id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()`);
+			const granted = await grantForCaptured(db, order, paymentId, status);
+			const refunded = await syncRefunds(db, order, payment);
+			results.push({ razorpayPaymentId: paymentId, status, pointsGranted: granted, refundedInr: refunded });
+		}
+		return c.json({ orderId: order.id, payments: results });
+	});
+
+	app.post("/api/webhooks/razorpay", async (c) => {
+		const body = new Uint8Array(await c.req.arrayBuffer());
+		let billing;
+		try { billing = loadBillingSettings(); } catch { return error("SERVICE_UNAVAILABLE", "Webhooks are not configured", 503); }
+		if (!billing.razorpayWebhookSecret) return error("SERVICE_UNAVAILABLE", "Webhooks are not configured", 503);
+		if (!verifyWebhookSignature(body, c.req.header("x-razorpay-signature") ?? "", billing.razorpayWebhookSecret)) return error("INVALID_SIGNATURE", "Webhook signature verification failed", 400);
+		let payload: Record<string, unknown>;
+		try { payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>; } catch { return error("INVALID_REQUEST", "Webhook body must be JSON", 400); }
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return error("INVALID_REQUEST", "Webhook body must be JSON", 400);
+		const eventId = c.req.header("x-razorpay-event-id") ?? digest(new TextDecoder().decode(body));
+		const event = String(payload["event"] ?? "");
+		const inserted = await db.execute(sql`INSERT INTO razorpay_webhook_event (id, event_type, payload, received_at) VALUES (${eventId}, ${event}, ${JSON.stringify(payload)}::jsonb, now()) ON CONFLICT (id) DO NOTHING RETURNING id`);
+		if (!inserted.length) return c.json({ received: true });
+		const payment = paymentEntity(payload);
+		const paymentId = typeof payment["id"] === "string" ? payment["id"] : "";
+		if (paymentId && (event.startsWith("payment.") || event.startsWith("order."))) {
+			const order = (await db.execute(sql`SELECT id, account_id, pack_id, points, amount_inr FROM razorpay_order WHERE razorpay_order_id = ${String(payment["order_id"] ?? "")}`))[0] as { id: string; account_id: string; pack_id: string; points: number; amount_inr: number } | undefined;
+			if (order) {
+				await db.execute(sql`INSERT INTO razorpay_payment (id, razorpay_payment_id, order_row_id, status, method, amount_inr, points_granted, signature_verified, source, created_at, updated_at) VALUES (${crypto.randomUUID()}, ${paymentId}, ${order.id}, ${String(payment["status"] ?? "")}, ${typeof payment["method"] === "string" ? payment["method"] : null}, ${order.amount_inr}, false, true, 'webhook', now(), now()) ON CONFLICT (razorpay_payment_id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()`);
+				await grantForCaptured(db, order, paymentId, String(payment["status"] ?? ""));
+				await syncRefunds(db, order, payment);
+			}
+		}
+		await db.execute(sql`UPDATE razorpay_webhook_event SET processed_at = now() WHERE id = ${eventId}`);
+		return c.json({ received: true });
+	});
+
+	app.post("/api/admin/organizations/:organizationId/entitlement", zValidator("json", z.object({ note: z.string().max(500).default("") })), async (c) => {
+		if (!isAdmin(c)) return error("NOT_FOUND", "Not found", 404);
+		const organizationId = c.req.param("organizationId");
+		const existing = (await db.execute(sql`SELECT id FROM organization_entitlement WHERE organization_id = ${organizationId}`))[0];
+		if (existing) return error("INVALID_REQUEST", "Entitlement already exists", 409);
+		await db.execute(sql`INSERT INTO organization_entitlement (id, organization_id, provisioned_by, note, created_at) VALUES (${crypto.randomUUID()}, ${organizationId}, 'admin', ${c.req.valid("json").note.trim() || null}, now())`);
+		return c.json({ organizationId, note: c.req.valid("json").note }, 201);
+	});
+
+	app.delete("/api/admin/organizations/:organizationId/entitlement", async (c) => {
+		if (!isAdmin(c)) return error("NOT_FOUND", "Not found", 404);
+		await db.execute(sql`DELETE FROM organization_entitlement WHERE organization_id = ${c.req.param("organizationId")}`);
+		return new Response(null, { status: 204 });
+	});
+
+	app.post("/api/admin/retention/sweep", async (c) => {
+		if (!isAdmin(c)) return error("NOT_FOUND", "Not found", 404);
+		const result = await purgeExpiredData(db, new LocalObjectStorage(config.storageRoot), new Date());
+		return c.json({ documentsPurged: result.documentsPurged, independentEvaluationsPurged: result.independentEvaluationsPurged });
+	});
+
+	app.post("/api/demo/session", zValidator("json", z.object({ act: z.enum(["employer", "candidate"]) })), async (c) => {
+		const act = c.req.valid("json").act;
+		const demoEmail = act === "employer" ? "demo-employer@skillsignal.app" : "demo-candidate@skillsignal.app";
+		let demoUser = (await db.select().from(users).where(eq(users.email, demoEmail)).limit(1))[0];
+		if (!demoUser) {
+			const id = crypto.randomUUID();
+			await db.execute(sql`INSERT INTO "user" (id, name, email, account_type, email_verified, is_demo, created_at, updated_at) VALUES (${id}, ${act === "employer" ? "Demo Recruiter" : "Demo Candidate"}, ${demoEmail}, ${act}, true, true, now(), now()) ON CONFLICT DO NOTHING`);
+			await db.execute(sql`INSERT INTO account (id, account_id, provider_id, user_id, password, created_at, updated_at) VALUES (${crypto.randomUUID()}, ${demoEmail}, 'credential', ${id}, ${createHash("sha256").update("demo-password").digest("hex")}, now(), now()) ON CONFLICT DO NOTHING`);
+			demoUser = (await db.select().from(users).where(eq(users.email, demoEmail)).limit(1))[0];
+		}
+		if (!demoUser) return error("SERVICE_UNAVAILABLE", "Demo workspace is unavailable", 503);
+		if (act === "employer") {
+			const membership = await db.select().from(organizationMembers).where(eq(organizationMembers.userId, demoUser.id)).limit(1);
+			if (!membership[0]) {
+				const orgId = crypto.randomUUID();
+				await db.execute(sql`INSERT INTO organization (id, name, created_at, updated_at) VALUES (${orgId}, 'Demo Organization', now(), now())`);
+				await db.execute(sql`INSERT INTO organization_member (id, organization_id, user_id, role, created_at) VALUES (${crypto.randomUUID()}, ${orgId}, ${demoUser.id}, 'owner', now())`);
+			}
+		}
+		const issued = await issueToken(demoUser as AuthUser, config.jwtSecret, config.jwtTtlSeconds);
+		return c.json({ user: { id: demoUser.id, name: demoUser.name, email: demoUser.email, accountType: demoUser.accountType }, token: issued.token, tokenType: "Bearer", expiresAt: issued.expiresAt });
 	});
 
 	app.get("/api/processing-jobs/:processingJobId", async (c) => {
 		const user = requireUser(c); if (!user) return error("UNAUTHORIZED", "Unauthorized", 401);
 		const result = await db.select().from(processingJobs).where(eq(processingJobs.id, c.req.param("processingJobId"))).limit(1);
 		const processing = result[0]; if (!processing) return error("NOT_FOUND", "Processing job not found", 404);
+		const independent = (await db.execute(sql`SELECT user_id FROM independent_evaluation WHERE id = ${processing.payloadReference}`))[0] as { user_id: string } | undefined;
+		if (independent) {
+			if (independent.user_id !== user.id) return error("NOT_FOUND", "Processing job not found", 404);
+		} else {
+			const submission = (await db.execute(sql`SELECT organization_id FROM resume_submission WHERE resume_version_id = ${processing.payloadReference}`))[0] as { organization_id: string } | undefined;
+			if (!submission) return error("NOT_FOUND", "Processing job not found", 404);
+			const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, submission.organization_id), eq(organizationMembers.userId, user.id))).limit(1);
+			if (!member[0]) return error("NOT_FOUND", "Processing job not found", 404);
+		}
 		return c.json({ id: processing.id, status: processing.status, safeError: processing.safeError, retryable: processing.status === "ready" && processing.attemptCount < processing.maximumAttempts });
 	});
 	return app;

@@ -14,6 +14,8 @@ describe("Hono API", () => {
 			workerPollIntervalSeconds: 1,
 			workerLeaseSeconds: 60,
 			parseTimeoutSeconds: 30,
+			independentRetentionDays: 30,
+			openrouter: { apiKey: "", baseUrl: "https://openrouter.ai/api/v1", timeoutSeconds: 90, extractionModels: [], assessmentModels: [], embeddingModels: [], embeddingModel: "openai/text-embedding-3-small" },
 		});
 		const response = await app.request("http://localhost/health");
 		expect(response.status).toBe(200);
