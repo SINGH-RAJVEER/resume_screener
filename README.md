@@ -51,42 +51,33 @@ intended product.
 
 ```
 apps/
-	api/     FastAPI service. Auth, organizations, jobs, uploads,
-	         invitations, evaluation queries, CSV export. Runs Alembic
-	         migrations at container start.
-	worker/  Queue worker. Claims processing_job rows with FOR UPDATE SKIP
+	api/     Bun + Hono API service. Auth, organizations, jobs, uploads,
+	         invitations, evaluation queries with evidence, CSV export,
+	         billing with Razorpay reconciliation, admin retention, and demo
+	         sessions. Runs Drizzle migrations at container start.
+	worker/  Bun queue worker. Claims processing_job rows with FOR UPDATE SKIP
 	         LOCKED, parses documents, matches skills against a corpus,
-	         calls OpenRouter for extraction and assessment, renders the
-	         corrected DOCX. Independent deployable; talks to Postgres and
-	         reads uploaded files from shared storage.
+	         calls OpenRouter for extraction and assessment, stores
+	         embeddings, settles point holds, renders the corrected DOCX.
+	         Independent deployable; talks to Postgres and reads uploaded
+	         files from shared storage.
 	web/     React 19 + Vite frontend. Candidate portal and employer
 	         workspace, shadcn-style UI components.
-	api-new/  Bun + Hono + Drizzle API port. It mirrors the Python API routes
-	          including auth, organizations, jobs, invitations, submissions,
-	          independent evaluations, evaluations with evidence, CSV export,
-	          billing with Razorpay reconciliation, admin retention, and demo
-	          sessions while preserving the existing PostgreSQL schema and
-	          API contracts.
-	worker-new/ Bun queue-worker port. It contains the PostgreSQL lease,
-	            heartbeat, retry, and OpenRouter adapter seams with full
-	            document, extraction, requirement-compiler, embedding,
-	            assessment, settlement, and report-rendering stages.
 libs/
 	ui/      Shared UI component package used by web.
-	server-core/ Shared Bun database schema, configuration, and queue primitives.
+	server-core/ Shared Bun database schema, configuration, billing, points,
+	             retention, storage, and queue primitives.
 docs/
 	specs/       Product behavior, one file per area. The source of truth.
 	research/    Provider constraints, architecture research.
 ```
 
-The TypeScript ports are intentionally separate from the Python services during
-migration. They share the existing PostgreSQL tables and do not create or alter
-database migrations yet. Start them locally with `bun run --cwd apps/api-new
-dev` and `bun run --cwd apps/worker-new dev` after setting `JWT_SECRET` and
+Start the services locally with `bun run --cwd apps/api
+dev` and `bun run --cwd apps/worker dev` after setting `JWT_SECRET` and
 `DATABASE_URL`.
 
-The worker's skill corpus (`apps/worker/worker/documents/skills_corpus.json`)
-is generated. Edit `scripts/build_skills_corpus.py`, never the JSON.
+The worker's skill corpus (`apps/worker/src/domain/skills_corpus.json`)
+is checked in.
 
 ## Run with Docker
 
@@ -110,20 +101,20 @@ ADMIN_TOKEN=some-admin-token
 docker compose up --build
 ```
 
-The API container applies migrations on startup. When everything is up:
+The API container applies the Drizzle baseline migration on startup. When everything is up:
 web at http://localhost:3000, API at http://localhost:8000 (health check at
 `/health`). Uploaded files live in the `resume_storage` volume; the worker
 mounts it read-write because it renders corrected resumes back into storage.
 
 ## Run locally
 
-Assumes a running PostgreSQL server you can point at, plus [uv](https://docs.astral.sh/uv/)
-and [bun](https://bun.sh).
+Assumes a running PostgreSQL server you can point at, plus
+[bun](https://bun.sh).
 
 1. Create a database, then export connection settings:
 
 ```sh
-export DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/skillsignal"
+export DATABASE_URL="postgresql://postgres:password@localhost:5432/skillsignal"
 export JWT_SECRET="some-secret-at-least-32-characters-long"
 export STORAGE_ROOT=".local-storage"
 export OPENROUTER_API_KEY="sk-or-..."   # optional
@@ -135,17 +126,17 @@ export OPENROUTER_API_KEY="sk-or-..."   # optional
 
 ```sh
 cd apps/api
-uv sync
-uv run python migrate.py upgrade head   # alembic, with a Python 3.14 fix applied
-bun dev        # uvicorn on :8000 with reload
+bun install
+bun src/migrate.ts   # drizzle baseline, idempotent
+bun dev        # bun on :8000 with reload
 ```
 
 3. Worker, in a second terminal:
 
 ```sh
 cd apps/worker
-uv sync
-uv run python -m worker.main
+bun install
+bun src/index.ts
 ```
 
 4. Web, in a third terminal:
@@ -162,8 +153,8 @@ candidate to run private checks.
 ## Tests
 
 ```sh
-cd apps/api && bun test      # pytest via uv
-cd apps/worker && bun test   # pytest via uv
+cd apps/api && bun test
+cd apps/worker && bun test
 ```
 
 Or `bun test` at the repo root for both. The web app has no unit tests yet;
