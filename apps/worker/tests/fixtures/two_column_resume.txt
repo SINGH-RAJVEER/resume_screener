@@ -1,6 +1,0 @@
-ADA LOVELACE                      EXPERIENCE
-ada@example.com                  Example Corp
-London, United Kingdom           Senior Platform Engineer, 2020 to 2025
-
-SKILLS                            EDUCATION
-Python, PostgreSQL, Kubernetes    BSc Computer Science
