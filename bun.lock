@@ -12,10 +12,6 @@
     "apps/api": {
       "name": "@skillsignal/api",
       "version": "0.0.1",
-    },
-    "apps/api-new": {
-      "name": "@skillsignal/api-new",
-      "version": "0.0.1",
       "dependencies": {
         "@hono/zod-validator": "^0.7.5",
         "@skillsignal/server-core": "workspace:*",
@@ -24,6 +20,7 @@
         "fflate": "^0.8.3",
         "hono": "^4.9.7",
         "jose": "^6.1.0",
+        "postgres": "^3.4.7",
         "zod": "^4.1.5",
       },
       "devDependencies": {
@@ -52,8 +49,8 @@
         "vite": "6.4.3",
       },
     },
-    "apps/worker-new": {
-      "name": "@skillsignal/worker-new",
+    "apps/worker": {
+      "name": "@skillsignal/worker",
       "version": "0.0.1",
       "dependencies": {
         "@skillsignal/server-core": "workspace:*",
@@ -292,15 +289,13 @@
 
     "@skillsignal/api": ["@skillsignal/api@workspace:apps/api"],
 
-    "@skillsignal/api-new": ["@skillsignal/api-new@workspace:apps/api-new"],
-
     "@skillsignal/server-core": ["@skillsignal/server-core@workspace:libs/server-core"],
 
     "@skillsignal/ui": ["@skillsignal/ui@workspace:libs/ui"],
 
     "@skillsignal/web": ["@skillsignal/web@workspace:apps/web"],
 
-    "@skillsignal/worker-new": ["@skillsignal/worker-new@workspace:apps/worker-new"],
+    "@skillsignal/worker": ["@skillsignal/worker@workspace:apps/worker"],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.3.3", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "^5.24.1", "jiti": "^2.7.0", "lightningcss": "1.32.0", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.3.3" } }, "sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg=="],
 

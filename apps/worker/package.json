@@ -1,5 +1,5 @@
 {
-	"name": "@skillsignal/api-new",
+	"name": "@skillsignal/worker",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
@@ -8,17 +8,13 @@
 		"build": "bun build src/index.ts --outdir dist --target bun",
 		"start": "bun src/index.ts",
 		"typecheck": "tsgo --noEmit",
-		"lint": "biome check src/",
-		"db:generate": "bunx drizzle-kit generate --config ../../libs/server-core/drizzle.config.ts"
+		"lint": "biome check src/"
 	},
 	"dependencies": {
-		"@hono/zod-validator": "^0.7.5",
 		"@skillsignal/server-core": "workspace:*",
-		"bcryptjs": "^3.0.2",
+		"docx": "^9.7.1",
 		"drizzle-orm": "^0.44.7",
-		"fflate": "^0.8.3",
-		"hono": "^4.9.7",
-		"jose": "^6.1.0",
+		"postgres": "^3.4.7",
 		"zod": "^4.1.5"
 	},
 	"devDependencies": {
