@@ -61,12 +61,16 @@ apps/
 	         reads uploaded files from shared storage.
 	web/     React 19 + Vite frontend. Candidate portal and employer
 	         workspace, shadcn-style UI components.
-	api-new/  Bun + Hono + Drizzle API port. It currently runs health,
-	          authentication, session, and initial organization endpoints while
-	          preserving the existing PostgreSQL schema and API contracts.
+	api-new/  Bun + Hono + Drizzle API port. It mirrors the Python API routes
+	          including auth, organizations, jobs, invitations, submissions,
+	          independent evaluations, evaluations with evidence, CSV export,
+	          billing with Razorpay reconciliation, admin retention, and demo
+	          sessions while preserving the existing PostgreSQL schema and
+	          API contracts.
 	worker-new/ Bun queue-worker port. It contains the PostgreSQL lease,
-	            heartbeat, retry, and OpenRouter adapter seams. Document and
-	            evaluation stages are being ported incrementally.
+	            heartbeat, retry, and OpenRouter adapter seams with full
+	            document, extraction, requirement-compiler, embedding,
+	            assessment, settlement, and report-rendering stages.
 libs/
 	ui/      Shared UI component package used by web.
 	server-core/ Shared Bun database schema, configuration, and queue primitives.
