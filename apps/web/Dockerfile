@@ -6,6 +6,7 @@ COPY package.json bun.lock* ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY libs/ui/package.json ./libs/ui/
+COPY libs/server-core/package.json ./libs/server-core/
 RUN --mount=type=cache,target=/root/.bun/install/cache \
 	bun install --frozen-lockfile
 

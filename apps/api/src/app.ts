@@ -796,4 +796,4 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 	return app;
 };
 
-export const bootstrap = () => { const config = loadConfig(); const { db, client } = createDatabase(config.databaseUrl); const app = createApp(db, config); return { app, client }; };
+export const bootstrap = () => { const config = loadConfig(); const { db, client } = createDatabase(config.databaseUrl); const app = createApp(db, config); return { app, client, config }; };

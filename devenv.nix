@@ -12,10 +12,9 @@ let
 		in if value == "" then "3000" else value;
 
 	# DATABASE_URL is assembled at process start from PGHOST/PGPORT because
-	# devenv resolves the postgres port per invocation when 5432 is busy. The
-	# +asyncpg scheme is required by the worker and accepted by the API.
+	# devenv resolves the postgres port per invocation when 5432 is busy.
 	processDbUrl =
-		"export DATABASE_URL=\"postgresql+asyncpg://postgres:password@\$PGHOST:\$PGPORT/skillsignal\"";
+		"export DATABASE_URL=\"postgresql://postgres:password@\$PGHOST:\$PGPORT/skillsignal\"";
 in
 {
 	dotenv.disableHint = true;
@@ -26,12 +25,8 @@ in
 		bun.install.enable = true;
 	};
 
-	# Python is managed by uv (per-project .venv in apps/api and apps/worker);
-	# providing the interpreter on PATH keeps uv from downloading its own.
-	# libstdc++ is needed by manylinux wheels such as greenlet on NixOS.
+	# Bun workspaces only; the API and worker are TypeScript services.
 	packages = [
-		pkgs.python314
-		pkgs.uv
 		pkgs.stdenv.cc.cc.lib
 	];
 
@@ -60,11 +55,11 @@ in
 		exec = lib.concatStringsSep "\n" [
 			processDbUrl
 			# Same boot sequence as apps/api/Dockerfile: migrate, then serve.
-			''.venv/bin/python migrate.py upgrade head && exec .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port ${apiPort} --reload''
+			''export PORT=${apiPort} && bun src/migrate.ts && exec bun --watch src/index.ts''
 		];
 		cwd = "${config.devenv.root}/apps/api";
 		after = [ "devenv:processes:postgres@ready" ];
-		# Migrations run before uvicorn binds; allow a few minutes of boot time.
+		# Migrations run before bun binds; allow a few minutes of boot time.
 		ready.http.get.port = lib.toInt apiPort;
 		ready.http.get.path = "/health";
 		ready.period = 3;
@@ -75,7 +70,7 @@ in
 	processes.worker = {
 		exec = lib.concatStringsSep "\n" [
 			processDbUrl
-			"exec .venv/bin/python -m worker.main"
+			"exec bun --watch src/index.ts"
 		];
 		cwd = "${config.devenv.root}/apps/worker";
 		# Wait for the API so migrations have created the job tables.
@@ -90,10 +85,9 @@ in
 	};
 
 	enterShell = ''
-		uv sync --project "$DEVENV_ROOT/apps/api"
-		uv sync --project "$DEVENV_ROOT/apps/worker"
+		bun install
 
-		export DATABASE_URL="postgresql+asyncpg://postgres:password@$PGHOST:$PGPORT/skillsignal"
+		export DATABASE_URL="postgresql://postgres:password@$PGHOST:$PGPORT/skillsignal"
 
 		# Local secrets (.env, gitignored) feed optional integrations such as
 		# OpenRouter and Razorpay. Existing variables win so the preview keeps

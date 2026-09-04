@@ -24,11 +24,7 @@ services:
         ports:
             - "8000:8000"
         environment:
-            DATABASE_HOST: postgres
-            DATABASE_PORT: 5432
-            DATABASE_NAME: ${POSTGRES_DB:-skillsignal}
-            DATABASE_USER: ${POSTGRES_USER:-postgres}
-            DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+            DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-skillsignal}
             WEB_URL: ${WEB_URL:-http://localhost:3000}
             JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
             JWT_TTL: ${JWT_TTL:-168h}
@@ -67,7 +63,7 @@ services:
         tmpfs:
             - /tmp:size=64m,noexec,nosuid,nodev
         environment:
-            DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-skillsignal}
+            DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-skillsignal}
             STORAGE_ROOT: /var/resume-storage
             WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
             WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
@@ -79,8 +75,8 @@ services:
             PRICE_CEILING_OUTPUT_USD_PER_MILLION: ${PRICE_CEILING_OUTPUT_USD_PER_MILLION:-15.0}
             OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
             OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
-            OPENROUTER_EXTRACTION_MODEL: ${OPENROUTER_EXTRACTION_MODEL:-}
-            OPENROUTER_ASSESSMENT_MODEL: ${OPENROUTER_ASSESSMENT_MODEL:-}
+            OPENROUTER_EXTRACTION_MODELS: ${OPENROUTER_EXTRACTION_MODELS:-${OPENROUTER_EXTRACTION_MODEL:-}}
+            OPENROUTER_ASSESSMENT_MODELS: ${OPENROUTER_ASSESSMENT_MODELS:-${OPENROUTER_ASSESSMENT_MODEL:-}}
             OPENROUTER_EMBEDDING_MODEL: ${OPENROUTER_EMBEDDING_MODEL:-}
             OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-}
             OPENROUTER_MAX_OUTPUT_TOKENS: ${OPENROUTER_MAX_OUTPUT_TOKENS:-}
@@ -93,50 +89,6 @@ services:
                 limits:
                     cpus: "1"
                     memory: 512M
-        depends_on:
-            postgres:
-                condition: service_healthy
-
-    api-new:
-        profiles: ["ts-port"]
-        build:
-            context: .
-            dockerfile: apps/api-new/Dockerfile
-        restart: unless-stopped
-        ports:
-            - "8001:8000"
-        environment:
-            DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-skillsignal}
-            WEB_URL: ${WEB_URL:-http://localhost:3000}
-            JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-            STORAGE_ROOT: /var/resume-storage
-        volumes:
-            - resume_storage:/var/resume-storage
-        depends_on:
-            postgres:
-                condition: service_healthy
-
-    worker-new:
-        profiles: ["ts-port"]
-        build:
-            context: .
-            dockerfile: apps/worker-new/Dockerfile
-        restart: unless-stopped
-        read_only: true
-        security_opt:
-            - no-new-privileges:true
-        cap_drop:
-            - ALL
-        tmpfs:
-            - /tmp:size=64m,noexec,nosuid,nodev
-        environment:
-            DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-skillsignal}
-            STORAGE_ROOT: /var/resume-storage
-            WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
-            WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
-            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-        volumes:
-            - resume_storage:/var/resume-storage
         depends_on:
             postgres:
                 condition: service_healthy
