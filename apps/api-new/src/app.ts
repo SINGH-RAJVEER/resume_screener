@@ -9,6 +9,7 @@ import { loadBillingSettings } from "@skillsignal/server-core/billing";
 import { availableBalance, balance, ensureOrganizationAccount, ensureUserAccount, grantInSession, releaseInSession, reserveInSession, InsufficientPointsError } from "@skillsignal/server-core/points";
 import { purgeExpiredData } from "@skillsignal/server-core/retention";
 import { LocalObjectStorage } from "@skillsignal/server-core/storage";
+import { SCORING_POLICY_VERSION } from "@skillsignal/server-core/versions";
 import { batchEvaluations, candidateRecords, evaluations, independentEvaluations, invitations, jobRequirements, jobVersions, jobs, organizationAllowedEmails, organizationEmailDomains, organizationMembers, organizations, processingJobs, resumeDocuments, resumeSubmissions, resumeVersions, users, weeklyFreeUses } from "@skillsignal/server-core/schema";
 import { authenticate, issueToken, register, signIn, type AuthUser } from "./auth.ts";
 import { mkdir } from "node:fs/promises";
@@ -16,7 +17,7 @@ import { join, resolve } from "node:path";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { unzipSync } from "fflate";
 import { RazorpayClient, RazorpayError, RazorpayUnavailableError, verifyCheckoutSignature, verifyWebhookSignature, paymentEntity } from "./billing/razorpay.ts";
-import { INDEPENDENT_QUOTE, UnknownQuoteKindError, pointQuote } from "./billing/quotes.ts";
+import { EMPLOYER_QUOTE, INDEPENDENT_QUOTE, UnknownQuoteKindError, pointQuote } from "./billing/quotes.ts";
 import { claimFreeWeek, nextReset, weekStart } from "./billing/allowance.ts";
 
 type Variables = { user: AuthUser };
@@ -283,14 +284,30 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 		}
 		if (!current.version.confirmedAt) return error("REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed", 409);
 		if (invitationId && (!current.job.applicationOpensAt || !current.job.applicationClosesAt || current.job.applicationOpensAt > new Date() || current.job.applicationClosesAt <= new Date())) return error("APPLICATIONS_CLOSED", "Job applications are not open", 409);
-		const content = new Uint8Array(await file.arrayBuffer()); const candidateId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const submissionId = crypto.randomUUID(); const batchId = crypto.randomUUID(); const evaluationId = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `resumes/${crypto.randomUUID()}${media.extension}`;
+		let employerQuote;
+		try { employerQuote = pointQuote(EMPLOYER_QUOTE, loadBillingSettings()); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		const entitlement = (await db.execute(sql`SELECT id FROM organization_entitlement WHERE organization_id = ${current.job.organizationId} LIMIT 1`))[0];
+		const orgAccount = await ensureOrganizationAccount(db, current.job.organizationId);
+		const candidateId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const submissionId = crypto.randomUUID(); const batchId = crypto.randomUUID(); const evaluationId = crypto.randomUUID(); const processingId = crypto.randomUUID();
+		let employerReservationId: string | null = null;
+		if (!entitlement) {
+			try {
+				const reservation = await reserveInSession(db, orgAccount.id, employerQuote.points, "employer_resume", `employer-resume:${evaluationId}`);
+				employerReservationId = reservation.id;
+			} catch (cause) {
+				if (cause instanceof InsufficientPointsError) return error("INSUFFICIENT_POINTS", `This evaluation requires up to ${employerQuote.points} points`, 402);
+				throw cause;
+			}
+		}
+		const content = new Uint8Array(await file.arrayBuffer()); const storageKey = `resumes/${crypto.randomUUID()}${media.extension}`;
 		await db.transaction(async (tx) => {
-			await tx.insert(batchEvaluations).values({ id: batchId, organizationId: current.job.organizationId, jobId, jobVersionId: current.version.id, createdByUserId: user.id, requirementSchemaVersion: current.version.schemaVersion ?? "pending-ts-port", scoringPolicyVersion: "pending-ts-port" });
+			await tx.insert(batchEvaluations).values({ id: batchId, organizationId: current.job.organizationId, jobId, jobVersionId: current.version.id, createdByUserId: user.id, requirementSchemaVersion: current.version.schemaVersion ?? "2", scoringPolicyVersion: SCORING_POLICY_VERSION });
 			await tx.insert(candidateRecords).values({ id: candidateId, organizationId: current.job.organizationId, userId: invitationId ? user.id : null });
 			await tx.insert(resumeDocuments).values({ id: documentId, organizationId: current.job.organizationId, candidateRecordId: candidateId, storageKey, checksum: createHash("sha256").update(content).digest("hex"), mediaType: media.mediaType, sizeBytes: content.byteLength, originalName: file.name, retentionDate: new Date(Date.now() + 90 * 86400000) });
 			await tx.insert(resumeVersions).values({ id: versionId, organizationId: current.job.organizationId, resumeDocumentId: documentId, version: 1 });
 			await tx.insert(resumeSubmissions).values({ id: submissionId, organizationId: current.job.organizationId, jobId, candidateRecordId: candidateId, resumeVersionId: versionId, submittingUserId: user.id });
-			await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: current.version.id, resumeVersionId: versionId });
+			await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: current.version.id, resumeVersionId: versionId, pointReservationId: employerReservationId });
+			await tx.execute(sql`INSERT INTO batch_evaluation_submission (organization_id, job_id, batch_evaluation_id, resume_submission_id, created_at) VALUES (${current.job.organizationId}, ${jobId}, ${batchId}, ${submissionId}, now())`);
 			await tx.insert(processingJobs).values({ id: processingId, type: "resume_processing", payloadReference: versionId, idempotencyKey: versionId });
 		});
 		await persistObject(config.storageRoot, storageKey, content);
@@ -303,12 +320,25 @@ export const createApp = (db: Database, config: ServerConfig): ApiApp => {
 		const body = await c.req.parseBody(); const files = Object.values(body).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is File => value instanceof File); if (!files.length || files.length > 500) return error("INVALID_REQUEST", "Batch must contain between 1 and 500 files", 400);
 		const job = (await db.select({ job: jobs, version: jobVersions }).from(jobs).innerJoin(jobVersions, eq(jobVersions.jobId, jobs.id)).where(eq(jobs.id, c.req.param("jobId"))).orderBy(desc(jobVersions.version)).limit(1))[0]; if (!job) return error("NOT_FOUND", "Job not found", 404); if (!job.version.confirmedAt) return error("REQUIREMENTS_NOT_CONFIRMED", "Job requirements must be confirmed", 409);
 		const member = await db.select().from(organizationMembers).where(and(eq(organizationMembers.organizationId, job.job.organizationId), eq(organizationMembers.userId, user.id))).limit(1); if (!member[0] || !["owner", "recruiter"].includes(member[0].role)) return error("FORBIDDEN", "Recruiter access required", 403);
-		const batchId = crypto.randomUUID(); await db.insert(batchEvaluations).values({ id: batchId, organizationId: job.job.organizationId, jobId: job.job.id, jobVersionId: job.version.id, createdByUserId: user.id, requirementSchemaVersion: job.version.schemaVersion ?? "pending-ts-port", scoringPolicyVersion: "pending-ts-port" });
+		const batchId = crypto.randomUUID(); await db.insert(batchEvaluations).values({ id: batchId, organizationId: job.job.organizationId, jobId: job.job.id, jobVersionId: job.version.id, createdByUserId: user.id, requirementSchemaVersion: job.version.schemaVersion ?? "2", scoringPolicyVersion: SCORING_POLICY_VERSION });
+		let employerQuote;
+		try { employerQuote = pointQuote(EMPLOYER_QUOTE, loadBillingSettings()); } catch { return error("SERVICE_UNAVAILABLE", "Billing configuration is invalid", 503); }
+		const entitlement = (await db.execute(sql`SELECT id FROM organization_entitlement WHERE organization_id = ${job.job.organizationId} LIMIT 1`))[0];
+		const orgAccount = await ensureOrganizationAccount(db, job.job.organizationId);
 		const accepted: Array<Record<string, string>> = []; const rejected: Array<Record<string, string>> = [];
 		for (const file of files) {
 			try {
 				const media = validateUpload(file); const content = new Uint8Array(await file.arrayBuffer()); const candidateId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const submissionId = crypto.randomUUID(); const evaluationId = crypto.randomUUID(); const processingId = crypto.randomUUID(); const storageKey = `resumes/${crypto.randomUUID()}${media.extension}`;
-				await db.transaction(async (tx) => { await tx.insert(candidateRecords).values({ id: candidateId, organizationId: job.job.organizationId }); await tx.insert(resumeDocuments).values({ id: documentId, organizationId: job.job.organizationId, candidateRecordId: candidateId, storageKey, checksum: createHash("sha256").update(content).digest("hex"), mediaType: media.mediaType, sizeBytes: content.byteLength, originalName: file.name, retentionDate: new Date(Date.now() + 90 * 86400000) }); await tx.insert(resumeVersions).values({ id: versionId, organizationId: job.job.organizationId, resumeDocumentId: documentId, version: 1 }); await tx.insert(resumeSubmissions).values({ id: submissionId, organizationId: job.job.organizationId, jobId: job.job.id, candidateRecordId: candidateId, resumeVersionId: versionId, submittingUserId: user.id }); await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: job.version.id, resumeVersionId: versionId }); await tx.insert(processingJobs).values({ id: processingId, type: "resume_processing", payloadReference: versionId, idempotencyKey: versionId }); });
+				let reservationId: string | null = null;
+				if (!entitlement) {
+					try {
+						reservationId = (await reserveInSession(db, orgAccount.id, employerQuote.points, "employer_resume", `employer-resume:${evaluationId}`)).id;
+					} catch (cause) {
+						if (cause instanceof InsufficientPointsError) { rejected.push({ name: file.name, reason: `This evaluation requires up to ${employerQuote.points} points` }); continue; }
+						throw cause;
+					}
+				}
+				await db.transaction(async (tx) => { await tx.insert(candidateRecords).values({ id: candidateId, organizationId: job.job.organizationId }); await tx.insert(resumeDocuments).values({ id: documentId, organizationId: job.job.organizationId, candidateRecordId: candidateId, storageKey, checksum: createHash("sha256").update(content).digest("hex"), mediaType: media.mediaType, sizeBytes: content.byteLength, originalName: file.name, retentionDate: new Date(Date.now() + 90 * 86400000) }); await tx.insert(resumeVersions).values({ id: versionId, organizationId: job.job.organizationId, resumeDocumentId: documentId, version: 1 }); await tx.insert(resumeSubmissions).values({ id: submissionId, organizationId: job.job.organizationId, jobId: job.job.id, candidateRecordId: candidateId, resumeVersionId: versionId, submittingUserId: user.id }); await tx.insert(evaluations).values({ id: evaluationId, batchEvaluationId: batchId, resumeSubmissionId: submissionId, jobVersionId: job.version.id, resumeVersionId: versionId, pointReservationId: reservationId }); await tx.execute(sql`INSERT INTO batch_evaluation_submission (organization_id, job_id, batch_evaluation_id, resume_submission_id, created_at) VALUES (${job.job.organizationId}, ${job.job.id}, ${batchId}, ${submissionId}, now())`); await tx.insert(processingJobs).values({ id: processingId, type: "resume_processing", payloadReference: versionId, idempotencyKey: versionId }); });
 				await persistObject(config.storageRoot, storageKey, content); accepted.push({ name: file.name, processingJobId: processingId, submissionId, evaluationId });
 			} catch (cause) { rejected.push({ name: file.name, reason: cause instanceof Error ? cause.message : "Invalid document" }); }
 		}

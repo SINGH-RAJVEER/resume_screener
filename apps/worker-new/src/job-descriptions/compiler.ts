@@ -340,7 +340,7 @@ const finalizeCandidate = (candidate: Record<string, unknown>): Record<string, u
 		predicate: candidate["predicate"],
 		source: evidence.map((entry) => [entry["blockId"], entry["startOffset"], entry["endOffset"]]),
 	};
-	const digest = createHash("blake2b512", { outputLength: 8 }).update(JSON.stringify(identity), "utf8").digest("hex");
+	const digest = createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex").slice(0, 16);
 	return { stableId: `requirement-${digest}`, ...candidate };
 };
 

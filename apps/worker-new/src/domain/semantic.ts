@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const textHash = (text: string): string =>
-	createHash("blake2b512", { outputLength: 16 }).update(text, "utf8").digest("hex");
+	createHash("sha256").update(text, "utf8").digest("hex").slice(0, 32);
 
 export const cosineSimilarity = (a: readonly number[], b: readonly number[]): number => {
 	if (a.length !== b.length || !a.length) return 0;
